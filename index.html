@@ -1,0 +1,1599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Stable</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@500;700&family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+  :root{
+    --barn-green:#1F2E23; --sage:#3D5A42; --chalk:#F6F3EA; --paper:#D4CBB3;
+    --brass:#B5824A; --red:#8C2F2F; --ink:#3a3527;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; height:100%; background:#0f1512; font-family:'Archivo',sans-serif; color:var(--ink);}
+  button{font-family:inherit; cursor:pointer;}
+  input,textarea,select{font-family:inherit; font-size:14px;}
+  #app{max-width:460px; margin:0 auto; background:var(--chalk); min-height:100vh; display:flex; flex-direction:column; position:relative;}
+  .topbar{background:var(--barn-green); color:var(--chalk); padding:18px 18px 14px; display:flex; justify-content:space-between; align-items:center; position:sticky; top:0; z-index:5;}
+  .brand{font-family:'Roboto Slab',serif; font-weight:700; font-size:20px;}
+  .brand span{color:var(--brass);}
+  .topbar .sub{font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--paper); opacity:.85;}
+  .screen{flex:1; padding:16px 16px 100px;}
+  .section-label{font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--sage); margin:22px 2px 10px; font-weight:600; display:flex; justify-content:space-between; align-items:center;}
+  .section-label:first-child{margin-top:0;}
+  .section-label .add-link{font-size:11px; color:var(--brass); cursor:pointer;}
+
+  .stall-card{background:var(--barn-green); border-radius:6px; margin-bottom:14px; overflow:hidden; border:1px solid #0c1410; position:relative; cursor:pointer;}
+  .stall-tag{position:absolute; top:12px; right:-1px; color:var(--barn-green); font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:700; letter-spacing:1px; padding:4px 10px 4px 12px; border-radius:4px 0 0 4px; text-transform:uppercase;}
+  .stall-photo{height:110px; background-size:cover; background-position:center; display:flex; align-items:center; justify-content:center; color:rgba(246,243,234,.35); font-family:'JetBrains Mono',monospace; font-size:11px;}
+  .stall-body{padding:14px 16px 16px;}
+  .stall-name{font-family:'Roboto Slab',serif; font-weight:700; font-size:18px; color:var(--chalk); margin:0 0 2px;}
+  .stall-sub{font-size:12px; color:var(--paper); opacity:.75; margin-bottom:12px;}
+  .nameplate-row{display:flex; gap:10px; border-top:1px solid rgba(246,243,234,.12); padding-top:10px;}
+  .nameplate-item{flex:1; min-width:0;}
+  .nameplate-label{font-family:'JetBrains Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:1px; color:var(--brass); margin-bottom:3px;}
+  .nameplate-val{font-family:'JetBrains Mono',monospace; font-size:11.5px; color:var(--chalk); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .nameplate-val.alert{color:#e2a15a;}
+
+  .quick-row{display:flex; gap:8px; margin-bottom:4px;}
+  .quick-btn{flex:1; background:var(--paper); border-radius:6px; padding:12px 6px; text-align:center; border:1px solid #c4b998;}
+  .quick-icon{font-size:18px; margin-bottom:4px; display:block;}
+  .quick-label{font-weight:600; font-size:10.5px; color:var(--barn-green);}
+
+  .card{background:#fff; border:1px solid var(--paper); border-radius:6px; padding:14px 16px; margin-bottom:10px;}
+  .row{display:flex; justify-content:space-between; align-items:center;}
+  .name{font-weight:600; font-size:13.5px;}
+  .sub{font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#8a8060; margin-top:2px;}
+  .pill{font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:600; padding:3px 9px; border-radius:20px; white-space:nowrap;}
+  .pill.ok{background:#e3ead9; color:var(--sage);}
+  .pill.low{background:#f2ded4; color:var(--red);}
+  .pill.neutral{background:var(--chalk); color:var(--sage); border:1px solid var(--paper);}
+
+  .report-title{font-family:'Roboto Slab',serif; font-weight:700; font-size:14.5px; color:var(--barn-green);}
+  .report-date{font-family:'JetBrains Mono',monospace; font-size:10px; color:#8a8060;}
+  .report-body{font-size:12.5px; line-height:1.6; color:var(--ink); white-space:pre-wrap;}
+  .tag-row{display:flex; gap:6px; margin-top:10px; flex-wrap:wrap;}
+  .tag{font-family:'JetBrains Mono',monospace; font-size:9.5px; background:var(--chalk); border:1px solid var(--paper); padding:3px 8px; border-radius:20px; color:var(--sage); cursor:pointer;}
+
+  .tabbar{position:sticky; bottom:0; background:var(--barn-green); display:flex; padding:9px 4px 14px; border-top:1px solid #0c1410;}
+  .tab{flex:1; text-align:center; color:rgba(246,243,234,.5); background:none; border:none; padding:4px 0;}
+  .tab.active{color:var(--brass);}
+  .tab-icon{font-size:17px; display:block; margin-bottom:2px;}
+  .tab-label{font-family:'JetBrains Mono',monospace; font-size:8.5px; text-transform:uppercase; letter-spacing:.5px;}
+
+  .btn{display:inline-block; padding:10px 16px; border-radius:6px; border:none; font-weight:600; font-size:13px;}
+  .btn-primary{background:var(--barn-green); color:var(--chalk); width:100%;}
+  .btn-secondary{background:var(--paper); color:var(--barn-green); width:100%;}
+  .btn-danger{background:var(--red); color:#fff;}
+  .btn-sm{padding:6px 10px; font-size:11.5px; border-radius:5px; border:1px solid var(--paper); background:#fff; color:var(--barn-green);}
+  .btn-row{display:flex; gap:8px; margin-top:10px;}
+
+  label{display:block; font-family:'JetBrains Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.8px; color:var(--sage); margin:12px 0 5px;}
+  input[type=text],input[type=number],input[type=date],input[type=email],input[type=tel],textarea,select{
+    width:100%; padding:9px 11px; border:1px solid var(--paper); border-radius:5px; background:#fff; color:var(--ink);
+  }
+  textarea{min-height:70px; resize:vertical;}
+  .field-row{display:flex; gap:8px;}
+  .field-row>div{flex:1;}
+
+  .modal-overlay{position:fixed; inset:0; background:rgba(15,21,18,.6); z-index:50; display:flex; align-items:flex-end; justify-content:center;}
+  .modal{background:var(--chalk); width:100%; max-width:460px; max-height:88vh; overflow-y:auto; border-radius:16px 16px 0 0; padding:20px 18px 28px;}
+  .modal h3{font-family:'Roboto Slab',serif; margin:0 0 4px; font-size:17px; color:var(--barn-green);}
+  .modal .close{position:absolute; right:16px; top:14px; background:none; border:none; font-size:20px; color:var(--sage);}
+  .modal-head{position:relative;}
+
+  .empty{text-align:center; padding:30px 10px; color:#9a927a; font-family:'JetBrains Mono',monospace; font-size:12px; line-height:1.7;}
+  .timeline-item{border-left:2px solid var(--paper); padding-left:12px; margin-bottom:14px; position:relative;}
+  .timeline-item::before{content:''; position:absolute; left:-5px; top:3px; width:8px; height:8px; border-radius:50%; background:var(--brass);}
+  .timeline-date{font-family:'JetBrains Mono',monospace; font-size:10px; color:#8a8060;}
+  .timeline-author{font-weight:600; font-size:12.5px; color:var(--barn-green); margin:2px 0 3px;}
+  .timeline-content{font-size:12.5px; line-height:1.55;}
+
+  .photo-preview{width:100%; height:160px; border-radius:6px; background-size:cover; background-position:center; background-color:var(--paper); margin-bottom:8px; display:flex; align-items:center; justify-content:center; color:#8a8060; font-family:'JetBrains Mono',monospace; font-size:11px;}
+  .chart-wrap{background:#fff; border:1px solid var(--paper); border-radius:6px; padding:12px; margin-bottom:10px;}
+  .link-box{background:#fff; border:1px dashed var(--brass); border-radius:6px; padding:10px; font-family:'JetBrains Mono',monospace; font-size:10.5px; word-break:break-all; color:var(--sage); margin:8px 0;}
+  .banner{background:var(--sage); color:var(--chalk); padding:10px 14px; border-radius:6px; font-size:12px; margin-bottom:12px; font-weight:600;}
+  .loading{opacity:.5; pointer-events:none;}
+  .spinner{display:inline-block; width:14px; height:14px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; margin-right:6px;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .toggle{display:flex; align-items:center; gap:8px; font-size:12.5px; margin:10px 0;}
+  .toggle input{width:auto;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* ============================= STORAGE HELPERS ============================= */
+let SYNC_OK = true;
+function markSyncStatus(ok){ SYNC_OK = ok; const dot = document.getElementById('syncDot'); if(dot) dot.style.display = ok ? 'none' : 'inline-block'; }
+async function sGet(key){
+  try{ const r = await window.storage.get(key, true); return r ? JSON.parse(r.value) : null; }
+  catch(e){ return null; }
+}
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+async function sSet(key, val, attempt){
+  attempt = attempt || 1;
+  try{
+    await window.storage.set(key, JSON.stringify(val), true);
+    markSyncStatus(true);
+    return true;
+  }catch(e){
+    if(attempt < 3){ await sleep(300*attempt); return sSet(key, val, attempt+1); }
+    markSyncStatus(false);
+    return false;
+  }
+}
+function uid(){ return Math.random().toString(36).slice(2,10) + Date.now().toString(36).slice(-4); }
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+function fmtDate(d){ return new Date(d+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
+function ageFromBirthDate(birthDate){
+  if(!birthDate) return null;
+  const b = new Date(birthDate+'T00:00:00'); const now = new Date();
+  let years = now.getFullYear() - b.getFullYear();
+  const hasHadBirthdayThisYear = (now.getMonth()>b.getMonth()) || (now.getMonth()===b.getMonth() && now.getDate()>=b.getDate());
+  if(!hasHadBirthdayThisYear) years--;
+  if(years < 1){
+    let months = (now.getFullYear()-b.getFullYear())*12 + (now.getMonth()-b.getMonth());
+    return months+'mo';
+  }
+  return years+'yo';
+}
+function horseSubhead(h){
+  const parts = [];
+  const age = ageFromBirthDate(h.birthDate);
+  if(age) parts.push(age);
+  if(h.heightHH) parts.push(h.heightHH+'hh');
+  if(h.breed) parts.push(h.breed);
+  if(h.sex) parts.push(h.sex);
+  return parts.join(' \u00b7 ') || 'No profile details yet';
+}
+function daysBetween(a,b){ return Math.round((new Date(b)-new Date(a))/86400000); }
+function nextDueInfo(hd, h, type){
+  const interval = (h.careIntervals && h.careIntervals[type]) || null;
+  if(!interval) return null;
+  const records = (hd.vetRecords||[]).filter(r=>r.type===type).sort((a,b)=>b.date.localeCompare(a.date));
+  if(records.length===0) return {status:'none', label:'No visit logged yet'};
+  const last = records[0].date;
+  const due = new Date(last); due.setDate(due.getDate() + interval*7);
+  const dueStr = due.toISOString().slice(0,10);
+  const daysOut = daysBetween(todayStr(), dueStr);
+  return { status: daysOut<0 ? 'overdue' : (daysOut<=7 ? 'soon' : 'ok'), label: daysOut<0 ? `Overdue by ${Math.abs(daysOut)}d` : `Due ${fmtDate(dueStr)} (${daysOut}d)`, lastDate:last };
+}
+
+/* ============================= STATE ============================= */
+let STATE = {
+  horses: [],           // horses-roster
+  horseData: {},         // horse-data:{id} keyed by id, lazy loaded
+  inventory: {items:[], lastDebitDate: todayStr()}, // inventory
+  contacts: {trainer:null, vet:null, farrier:null, bodywork:null, custom:[]}, // contacts
+  requests: [],          // requests
+};
+let ACTIVE_TAB = 'horses';
+let ACTIVE_HORSE = null;
+let RESPOND_MODE = null; // {requestId}
+
+/* ============================= SEED DATA ============================= */
+function seedHorses(){
+  return [
+    {
+      id:'quill', name:'Quill', registeredName:'Quilliam RSF', breeder:'Rio Star Farms', birthDate:'2020-06-03', heightHH:18.2, breed:'Oldenburg', sex:'Gelding', color:'', markings:'Snip, rear socks, front pastern marks', microchipNumber:'', registrationNumber:'', breeding:'Sire: Qredit; Dam: out of a Diamond-line stud mare', tagColor:'#B5824A', tagLabel:'Dressage', photo:null,
+      vetContext:{allergies:'None known', conditions:'History of white line disease (monitored); presumptive gastric sensitivity, omeprazole discussed with vet', meds:'', notes:'Long-standing bond, owned since ~age 2. Under saddle with trainer Jo.'}, careIntervals:{farrier:4, vet:26, bodywork:4}
+    },
+    {
+      id:'willow', name:'Willow', registeredName:'Willow Rose RSF', breeder:'Rio Star Farm', birthDate:'2024-06-14', heightHH:16.2, breed:'GOV (Oldenburg NA) Premium', sex:'Filly', color:'', markings:'None', microchipNumber:'', registrationNumber:'', breeding:'Sire: Fynch Hatton; Dam: Windsor Rose RSF (by Rascalino, out of Winter Willow RSF by Winterprinz)', tagColor:'#7d9a80', tagLabel:'Young Stock', photo:null,
+      vetContext:{allergies:'None known', conditions:'Bilateral hind fetlock OCD surgical history — monitor growth plates and DOD risk', meds:'', notes:'Relocated Texas \u2192 Colorado. Not yet in work. From Rio Star Farm.'}, careIntervals:{farrier:4, vet:26, bodywork:4}
+    }
+  ];
+}
+function seedInventory(){
+  return {
+    items:[
+      {id:uid(), name:'Empower Boost', unit:'lb', qtyOnHand:20, reorderDays:5},
+      {id:uid(), name:'Empower Topline Balance', unit:'lb', qtyOnHand:35, reorderDays:5},
+      {id:uid(), name:"Farrier's Formula Extra Strength", unit:'scoop', qtyOnHand:60, reorderDays:7},
+      {id:uid(), name:'Elevate Vitamin E', unit:'scoop', qtyOnHand:40, reorderDays:5},
+      {id:uid(), name:'Uckele Gut', unit:'scoop', qtyOnHand:30, reorderDays:5},
+      {id:uid(), name:'Beet Pulp Shreds', unit:'lb', qtyOnHand:25, reorderDays:5},
+      {id:uid(), name:'Alfalfa Pellets', unit:'lb', qtyOnHand:30, reorderDays:5},
+    ],
+    lastDebitDate: todayStr()
+  };
+}
+function emptyHorseData(){
+  return { feedingPlan:{AM:[], PM:[]}, medsPlan:[], skipDates:[], bcsLog:[], vetRecords:[], trainingNotes:[], aiReports:[], preparedBags:{daysRemaining:0, lastPrepDate:null}, photoLog:[], transitions:[] };
+}
+
+/* ============================= INIT / LOAD ============================= */
+async function runMigrations(){
+  let applied = await sGet('migrations');
+  if(!applied) applied = [];
+  const MIG_ID = 'willow-real-diet-and-profiles-2026-07-13';
+  if(applied.includes(MIG_ID)) return;
+
+  const quill = STATE.horses.find(h=>h.id==='quill');
+  const willow = STATE.horses.find(h=>h.id==='willow');
+  let rosterChanged = false;
+
+  if(quill){
+    quill.birthDate = '2020-06-03';
+    quill.registeredName = quill.registeredName || 'Quilliam RSF';
+    quill.breeder = quill.breeder || 'Rio Star Farms';
+    quill.markings = quill.markings || 'Snip, rear socks, front pastern marks';
+    rosterChanged = true;
+  }
+  if(willow){
+    willow.birthDate = '2024-06-14';
+    willow.registeredName = willow.registeredName || 'Willow Rose RSF';
+    willow.breeder = willow.breeder || 'Rio Star Farm';
+    willow.markings = willow.markings || 'None';
+    rosterChanged = true;
+  }
+  if(rosterChanged) await sSet('horses-roster', STATE.horses);
+
+  // Willow is actually still on Bryant Grain 14% Equine Energy Plus at ~8 lb/day (4 AM + 4 PM),
+  // not yet on Empower Topline Balance. Correct her live feeding plan and set up the real transition,
+  // starting Monday (the day after she arrives at the new barn).
+  const willowHd = STATE.horseData['willow'];
+  if(willowHd){
+    willowHd.feedingPlan = {
+      AM: [ {name:'14% Concentrate (transition)', amt:4, unit:'lb'}, {name:"Farrier's Formula Extra Strength", amt:1, unit:'scoop'} ],
+      PM: [ {name:'14% Concentrate (transition)', amt:4, unit:'lb'} ]
+    };
+    const startDate = '2026-07-13'; // Monday
+    willowHd.transitions = willowHd.transitions || [];
+    willowHd.transitions.push({
+      id: uid(), itemName:'Empower Topline Balance', targetAmt:2, unit:'lb', timing:'Both', weeks:3,
+      startDate, startAmt:0, replaces:'14% Concentrate (transition)', replacesAmt:8, status:'active'
+    });
+    willowHd.transitions.push({
+      id: uid(), itemName:'Elevate Vitamin E', targetAmt:1, unit:'scoop', timing:'AM', weeks:3,
+      startDate, startAmt:0, replaces:null, replacesAmt:0, status:'active'
+    });
+    willowHd.transitions.forEach(t=>{ if(t.startDate===startDate) applyTransitionToFeedingPlan(willowHd, t); });
+    await sSet('horse-data:willow', willowHd);
+    STATE.horseData['willow'] = willowHd;
+  }
+
+  // Make sure Bryant Grain is tracked in backstock so the transition's ramp-down debits correctly
+  if(!STATE.inventory.items.find(i=>i.name==='Bryant Grain 14% Equine Energy Plus')){
+    STATE.inventory.items.push({id:uid(), name:'Bryant Grain 14% Equine Energy Plus', unit:'lb', qtyOnHand:40, reorderDays:5});
+    await sSet('inventory', STATE.inventory);
+  }
+
+  applied.push(MIG_ID);
+  await sSet('migrations', applied);
+
+  // Second pass: generalize any already-saved 'Bryant Grain' references to a brand-neutral
+  // '14% Concentrate (transition)' label, so switching supply sources mid-transition doesn't
+  // break the name-matching that drives auto-debit.
+  const MIG_ID_2 = 'willow-generic-concentrate-rename-2026-07';
+  if(!applied.includes(MIG_ID_2)){
+    const OLD_NAME = 'Bryant Grain 14% Equine Energy Plus';
+    const NEW_NAME = '14% Concentrate (transition)';
+    const wHd = STATE.horseData['willow'];
+    if(wHd){
+      let changed = false;
+      ['AM','PM'].forEach(tm=>{
+        (wHd.feedingPlan[tm]||[]).forEach(it=>{ if(it.name===OLD_NAME){ it.name = NEW_NAME; changed=true; } });
+      });
+      (wHd.transitions||[]).forEach(t=>{ if(t.replaces===OLD_NAME){ t.replaces = NEW_NAME; changed=true; } });
+      if(changed) await sSet('horse-data:willow', wHd);
+    }
+    const oldInvItem = STATE.inventory.items.find(i=>i.name===OLD_NAME);
+    if(oldInvItem){ oldInvItem.name = NEW_NAME; await sSet('inventory', STATE.inventory); }
+    applied.push(MIG_ID_2);
+    await sSet('migrations', applied);
+  }
+
+  // Third pass: log the bridge-feed decision (Nutrena SafeChoice All Life Stages chosen over
+  // Purina Impact 14:6 for its closer trace-mineral match to Bryant Grain) for future reference.
+  const MIG_ID_3 = 'willow-bridge-feed-note-2026-07';
+  if(!applied.includes(MIG_ID_3)){
+    const w = STATE.horses.find(h=>h.id==='willow');
+    if(w){
+      const note = 'Bridge feed for "14% Concentrate" backstock: Nutrena SafeChoice All Life Stages (Chewy) chosen over Purina Impact 14:6 — closer match to prior Bryant Grain feed on trace mineral form (both use chelated Zinc/Copper/Cobalt complexes) and includes yeast culture.';
+      w.vetContext.notes = w.vetContext.notes ? w.vetContext.notes + ' | ' + note : note;
+      await sSet('horses-roster', STATE.horses);
+    }
+    applied.push(MIG_ID_3);
+    await sSet('migrations', applied);
+  }
+}
+
+async function loadAll(){
+  let horses = await sGet('horses-roster');
+  if(!horses){ horses = seedHorses(); await sSet('horses-roster', horses); }
+  STATE.horses = horses;
+
+  let inv = await sGet('inventory');
+  if(!inv){ inv = seedInventory(); await sSet('inventory', inv); }
+  STATE.inventory = inv;
+
+  let contacts = await sGet('contacts');
+  if(!contacts){ contacts = {trainer:null, vet:null, farrier:null, bodywork:null, custom:[]}; await sSet('contacts', contacts); }
+  STATE.contacts = contacts;
+
+  let requests = await sGet('requests');
+  if(!requests) requests = [];
+  STATE.requests = requests;
+
+  for(const h of STATE.horses){
+    await sleep(80);
+    let hd = await sGet('horse-data:'+h.id);
+    if(!hd){
+      hd = emptyHorseData();
+      if(h.id==='quill'){
+        hd.feedingPlan = { AM:[
+            {name:'Empower Topline Balance', amt:2, unit:'lb'},
+            {name:'Empower Boost', amt:0.25, unit:'lb'},
+            {name:'Elevate Vitamin E', amt:1, unit:'scoop'},
+            {name:"Farrier's Formula Extra Strength", amt:1, unit:'scoop'},
+            {name:'Uckele Gut', amt:1, unit:'scoop'},
+            {name:'Beet Pulp Shreds', amt:0.4, unit:'lb'},
+            {name:'Alfalfa Pellets', amt:0.65, unit:'lb'}
+          ], PM:[
+            {name:'Empower Topline Balance', amt:2, unit:'lb'},
+            {name:'Empower Boost', amt:0.25, unit:'lb'},
+            {name:'Elevate Vitamin E', amt:1, unit:'scoop'},
+            {name:"Farrier's Formula Extra Strength", amt:1, unit:'scoop'},
+            {name:'Uckele Gut', amt:1, unit:'scoop'},
+            {name:'Beet Pulp Shreds', amt:0.4, unit:'lb'},
+            {name:'Alfalfa Pellets', amt:0.65, unit:'lb'}
+          ] };
+        hd.medsPlan = [];
+        hd.bcsLog = [{date: todayStr(), score:5.5, weight:1500, notes:'Baseline'}];
+        hd.preparedBags = {daysRemaining:3, lastPrepDate: todayStr()};
+      }
+      if(h.id==='willow'){
+        hd.feedingPlan = { AM:[
+            {name:'Empower Topline Balance', amt:1, unit:'lb'},
+            {name:'Elevate Vitamin E', amt:1, unit:'scoop'},
+            {name:"Farrier's Formula Extra Strength", amt:1, unit:'scoop'}
+          ], PM:[
+            {name:'Empower Topline Balance', amt:1, unit:'lb'}
+          ] };
+        hd.bcsLog = [{date: todayStr(), score:5.0, weight:1000, notes:'Baseline, growing 2yo'}];
+        hd.preparedBags = {daysRemaining:5, lastPrepDate: todayStr()};
+      }
+      await sSet('horse-data:'+h.id, hd);
+    }
+    STATE.horseData[h.id] = hd;
+  }
+
+  await runMigrations();
+  await runAutoDebit();
+  await runTransitionUpdates();
+}
+
+/* ============================= AUTO-DEBIT ============================= */
+async function runAutoDebit(){
+  // Prepared bags (barn-side, ready to feed) debit by 1 day per elapsed day.
+  // Raw backstock is untouched here - it only moves when Lauren explicitly preps a new batch.
+  const today = todayStr();
+  let horseChanged = [];
+  for(const h of STATE.horses){
+    const hd = STATE.horseData[h.id];
+    if(!hd) continue;
+    hd.preparedBags = hd.preparedBags || {daysRemaining:0, lastPrepDate:null};
+    const last = hd.preparedBags.lastDebitDate || today;
+    const gap = daysBetween(last, today);
+    if(gap <= 0) continue;
+    let debitDays = 0;
+    for(let i=1;i<=gap;i++){
+      const d = new Date(last); d.setDate(d.getDate()+i);
+      const dStr = d.toISOString().slice(0,10);
+      if(!(hd.skipDates||[]).includes(dStr)) debitDays++;
+    }
+    hd.preparedBags.daysRemaining = Math.max(0, +(hd.preparedBags.daysRemaining - debitDays).toFixed(2));
+    hd.preparedBags.lastDebitDate = today;
+    horseChanged.push(h.id);
+  }
+  for(const id of horseChanged) await sSet('horse-data:'+id, STATE.horseData[id]);
+}
+
+/* Prep a batch of days' worth of bags for a horse: consumes raw backstock, adds to that horse's prepared-bag count */
+async function prepBags(horseId, days){
+  const hd = STATE.horseData[horseId];
+  const items = [...(hd.feedingPlan.AM||[]), ...(hd.feedingPlan.PM||[])];
+  const needed = {};
+  items.forEach(it=>{ needed[it.name] = (needed[it.name]||0) + it.amt*days; });
+  const shortfalls = [];
+  Object.keys(needed).forEach(name=>{
+    const invItem = STATE.inventory.items.find(x=>x.name.toLowerCase()===name.toLowerCase());
+    if(!invItem || invItem.qtyOnHand < needed[name]) shortfalls.push(name);
+  });
+  if(shortfalls.length){
+    return {ok:false, shortfalls};
+  }
+  Object.keys(needed).forEach(name=>{
+    const invItem = STATE.inventory.items.find(x=>x.name.toLowerCase()===name.toLowerCase());
+    invItem.qtyOnHand = +(invItem.qtyOnHand - needed[name]).toFixed(2);
+  });
+  hd.preparedBags.daysRemaining = +(hd.preparedBags.daysRemaining + days).toFixed(2);
+  hd.preparedBags.lastPrepDate = todayStr();
+  await sSet('inventory', STATE.inventory);
+  await sSet('horse-data:'+horseId, hd);
+  return {ok:true};
+}
+
+function dailyUsage(itemName){
+  let total = 0;
+  for(const h of STATE.horses){
+    const hd = STATE.horseData[h.id]; if(!hd) continue;
+    const items = [...(hd.feedingPlan.AM||[]), ...(hd.feedingPlan.PM||[])];
+    for(const it of items) if(it.name.toLowerCase()===itemName.toLowerCase()) total += it.amt;
+  }
+  return total;
+}
+
+/* ============================= PHOTO COMPRESSION ============================= */
+function compressImage(file, maxDim=800, quality=0.72){
+  return new Promise((resolve,reject)=>{
+    const reader = new FileReader();
+    reader.onload = e=>{
+      const img = new Image();
+      img.onload = ()=>{
+        let w=img.width, h=img.height;
+        if(w>h && w>maxDim){ h=Math.round(h*maxDim/w); w=maxDim; }
+        else if(h>=w && h>maxDim){ w=Math.round(w*maxDim/h); h=maxDim; }
+        const canvas = document.createElement('canvas');
+        canvas.width=w; canvas.height=h;
+        canvas.getContext('2d').drawImage(img,0,0,w,h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ============================= AI REPORT ============================= */
+async function generateAIReport(horseId, photoDataUrl, qualNotes){
+  const h = STATE.horses.find(x=>x.id===horseId);
+  const hd = STATE.horseData[horseId];
+  const recentNotes = (hd.trainingNotes||[]).slice(-5).map(n=>`- [${n.date}] ${n.author}: ${n.content}`).join('\n') || 'None';
+  const recentBcs = (hd.bcsLog||[]).slice(-3).map(b=>`- [${b.date}] BCS ${b.score}/9, ${b.weight}lb, ${b.notes||''}`).join('\n') || 'None';
+
+  const sys = `You are an experienced equine bodywork and conditioning assessor helping a horse owner track a horse's progress over time. You will be shown a photo and given context. Respond ONLY with valid JSON, no markdown fences, no preamble, in this exact shape:
+{"assessment":"2-4 sentence plain-language visual + qualitative assessment, noting posture, topline, muscling, weight, and anything relevant to soundness or condition. Be specific but appropriately cautious - you are not a substitute for a vet exam.",
+"trainerQuestions":["q1","q2"],
+"vetQuestions":["q1"],
+"farrierQuestions":["q1"],
+"bodyworkQuestions":["q1"]}
+Keep each question array to 1-3 sharp, specific questions only if genuinely warranted by what you see/read - do not pad with generic filler.`;
+
+  const userText = `Horse: ${h.name} (${horseSubhead(h)})
+Vet context: allergies: ${h.vetContext.allergies||'none'}; conditions: ${h.vetContext.conditions||'none'}
+Owner's qualitative notes for this check-in: ${qualNotes||'(none provided)'}
+Recent training notes:
+${recentNotes}
+Recent BCS/weight log:
+${recentBcs}`;
+
+  const content = [{type:'text', text:userText}];
+  if(photoDataUrl){
+    const match = photoDataUrl.match(/^data:(image\/\w+);base64,(.*)$/);
+    if(match) content.unshift({type:'image', source:{type:'base64', media_type:match[1], data:match[2]}});
+  }
+
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      model:'claude-sonnet-4-6', max_tokens:1000, system: sys,
+      messages:[{role:'user', content}]
+    })
+  });
+  const data = await resp.json();
+  const textBlocks = (data.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('\n');
+  let parsed;
+  try{ parsed = JSON.parse(textBlocks.replace(/```json|```/g,'').trim()); }
+  catch(e){ parsed = {assessment: textBlocks || 'Could not parse AI response.', trainerQuestions:[], vetQuestions:[], farrierQuestions:[], bodyworkQuestions:[]}; }
+  return parsed;
+}
+
+/* ============================= REQUEST QUESTION TEMPLATES ============================= */
+const ROLE_LABELS = {trainer:'Trainer', vet:'Vet', farrier:'Farrier', bodywork:'Bodywork'};
+function templateQuestions(role, horseName){
+  const t = {
+    trainer: [
+      `How would you rate ${horseName}'s energy level in recent sessions?`,
+      `How would you describe ${horseName}'s work ethic and attitude under saddle/in hand?`,
+      `Have you noticed changes in strength or fitness recently?`,
+      `Any soundness, balance, or movement concerns worth flagging?`,
+      `Anything else notable about ${horseName}'s progress right now?`
+    ],
+    vet: [
+      `Any health concerns you've observed in ${horseName} recently?`,
+      `Is the current supplement/medication plan still appropriate?`,
+      `Anything from the last exam we should be monitoring closely?`
+    ],
+    farrier: [
+      `How does ${horseName}'s hoof condition and balance look currently?`,
+      `Any changes in gait or landing pattern you've noticed?`,
+      `Is the current trim/shoeing cycle still the right interval?`
+    ],
+    bodywork: [
+      `Any areas of tension or soreness you found in ${horseName}'s last session?`,
+      `How is range of motion trending compared to previous sessions?`,
+      `Anything you'd want the owner or vet to know about?`
+    ]
+  };
+  return t[role] || [];
+}
+
+/* ============================= RENDER: SHELL ============================= */
+function render(){
+  const app = document.getElementById('app');
+  if(RESPOND_MODE){ app.innerHTML = renderRespondScreen(); attachRespondHandlers(); return; }
+  app.innerHTML = `
+    <div class="topbar">
+      <div class="brand">STA<span>BLE</span> <span id="syncDot" title="Sync issue - tap Settings to retry" style="display:${SYNC_OK?'none':'inline-block'}; width:7px; height:7px; border-radius:50%; background:#e2a15a; margin-left:4px;"></span></div>
+      <div class="sub">${new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}).toUpperCase()}</div>
+    </div>
+    <div class="screen" id="screen"></div>
+    <div class="tabbar">
+      ${tabBtn('horses','🐴','Horses')}
+      ${tabBtn('feed','🥣','Feed')}
+      ${tabBtn('care','📊','Care')}
+      ${tabBtn('reports','📸','Reports')}
+      ${tabBtn('settings','⚙️','Settings')}
+    </div>
+  `;
+  document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click', ()=>{ ACTIVE_TAB=b.dataset.tab; ACTIVE_HORSE=null; render(); }));
+  renderScreen();
+}
+function tabBtn(id,icon,label){
+  return `<button class="tab ${ACTIVE_TAB===id?'active':''}" data-tab="${id}"><span class="tab-icon">${icon}</span><span class="tab-label">${label}</span></button>`;
+}
+function renderScreen(){
+  const el = document.getElementById('screen');
+  if(ACTIVE_HORSE) { el.innerHTML = renderHorseDetail(ACTIVE_HORSE); attachHorseDetailHandlers(ACTIVE_HORSE); return; }
+  if(ACTIVE_TAB==='horses') { el.innerHTML = renderHorses(); attachHorsesHandlers(); }
+  else if(ACTIVE_TAB==='feed') { el.innerHTML = renderFeed(); attachFeedHandlers(); }
+  else if(ACTIVE_TAB==='care') { el.innerHTML = renderCareOverview(); attachCareOverviewHandlers(); }
+  else if(ACTIVE_TAB==='reports') { el.innerHTML = renderReportsOverview(); attachReportsOverviewHandlers(); }
+  else if(ACTIVE_TAB==='settings') { el.innerHTML = renderSettings(); attachSettingsHandlers(); }
+}
+
+/* ============================= HORSES TAB ============================= */
+function renderHorses(){
+  const cards = STATE.horses.map(h=>{
+    const hd = STATE.horseData[h.id] || emptyHorseData();
+    const lastBcs = (hd.bcsLog||[]).slice(-1)[0];
+    const lastReport = (hd.aiReports||[]).slice(-1)[0];
+    let nextReport = '—';
+    if(lastReport){
+      const days = 30 - daysBetween(lastReport.date, todayStr());
+      nextReport = days<=0 ? 'Due now' : days+' days';
+    } else nextReport = 'Not yet run';
+    return `
+      <div class="stall-card" data-horse="${h.id}">
+        <div class="stall-tag" style="background:${h.tagColor}">${h.tagLabel}</div>
+        <div class="stall-photo" style="${h.photo?`background-image:url(${h.photo})`:''}">${h.photo?'':'[ no photo ]'}</div>
+        <div class="stall-body">
+          <div class="stall-name">${h.name}</div>
+          <div class="stall-sub">${horseSubhead(h)}</div>
+          <div class="nameplate-row">
+            <div class="nameplate-item"><div class="nameplate-label">Bags Left</div><div class="nameplate-val ${hd.preparedBags.daysRemaining<2?'alert':''}">${hd.preparedBags.daysRemaining} days</div></div>
+            <div class="nameplate-item"><div class="nameplate-label">BCS</div><div class="nameplate-val">${lastBcs?lastBcs.score+'/9':'—'}</div></div>
+            <div class="nameplate-item"><div class="nameplate-label">Next Report</div><div class="nameplate-val ${nextReport==='Due now'?'alert':''}">${nextReport}</div></div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  const lowBags = STATE.horses.filter(h=>{
+    const hd = STATE.horseData[h.id];
+    return hd.preparedBags && hd.preparedBags.daysRemaining < 2;
+  });
+  const lowBackstock = STATE.inventory.items.filter(it=>{
+    const use = dailyUsage(it.name);
+    if(use<=0) return false;
+    return (it.qtyOnHand/use) <= it.reorderDays;
+  });
+
+  return `
+    <div class="section-label">— Horses — <span class="add-link" id="addHorseBtn">+ Add Horse</span></div>
+    ${cards || '<div class="empty">No horses yet.</div>'}
+    <div class="section-label">— Quick Actions —</div>
+    <div class="quick-row">
+      <div class="quick-btn" id="qaBagPrep"><span class="quick-icon">📋</span><span class="quick-label">Prep Bags</span></div>
+      <div class="quick-btn" id="qaReport"><span class="quick-icon">📸</span><span class="quick-label">AI Report</span></div>
+      <div class="quick-btn" id="qaRequest"><span class="quick-icon">✉️</span><span class="quick-label">Request Update</span></div>
+    </div>
+    ${lowBags.length? `
+    <div class="section-label">— ⚠ Prepared Bags Running Low —</div>
+    ${lowBags.map(h=>`<div class="card row"><div><div class="name">${h.name}</div><div class="sub">Ready-to-feed bags at the barn</div></div><div class="pill low">${STATE.horseData[h.id].preparedBags.daysRemaining} DAYS LEFT</div></div>`).join('')}
+    ` : ''}
+    ${lowBackstock.length? `
+    <div class="section-label">— Raw Backstock Running Low —</div>
+    ${lowBackstock.map(it=>`<div class="card row"><div><div class="name">${it.name}</div><div class="sub">${dailyUsage(it.name)} ${it.unit}/day across all horses</div></div><div class="pill low">${Math.floor(it.qtyOnHand/dailyUsage(it.name))} DAYS OF STOCK</div></div>`).join('')}
+    ` : ''}
+  `;
+}
+function attachHorsesHandlers(){
+  document.querySelectorAll('[data-horse]').forEach(c=>c.addEventListener('click', ()=>{ ACTIVE_HORSE=c.dataset.horse; renderScreen(); }));
+  const addBtn = document.getElementById('addHorseBtn'); if(addBtn) addBtn.addEventListener('click', openAddHorseModal);
+  const bp = document.getElementById('qaBagPrep'); if(bp) bp.addEventListener('click', ()=>openPrepBagsModal(STATE.horses[0]?.id));
+  const ar = document.getElementById('qaReport'); if(ar) ar.addEventListener('click', ()=>{ ACTIVE_TAB='reports'; render(); });
+  const rq = document.getElementById('qaRequest'); if(rq) rq.addEventListener('click', ()=>openRequestModal(STATE.horses[0]?.id));
+}
+
+function openAddHorseModal(){
+  showModal(`
+    <h3>Add Horse</h3>
+    <label>Photo</label>
+    <div class="photo-preview" id="nh-photo-preview">Tap to choose photo</div>
+    <input type="file" accept="image/*" id="nh-photo-input" style="display:none;">
+    <label>Name (Barn Name)</label><input type="text" id="nh-name">
+    <label>Registered Name</label><input type="text" id="nh-regname">
+    <label>Breeder</label><input type="text" id="nh-breeder">
+    <div class="field-row"><div><label>Birth Date</label><input type="date" id="nh-birthdate"></div><div><label>Height (hh)</label><input type="number" step="0.1" id="nh-height"></div></div>
+    <div class="field-row"><div><label>Registered Breed</label><input type="text" id="nh-breed"></div><div><label>Sex</label><input type="text" id="nh-sex" placeholder="Gelding/Mare/Filly/Colt"></div></div>
+    <div class="field-row"><div><label>Color</label><input type="text" id="nh-color2"></div><div><label>Markings</label><input type="text" id="nh-markings"></div></div>
+    <label>Breeding / Pedigree</label><input type="text" id="nh-breeding" placeholder="Sire x Dam">
+    <label>Tag Label (e.g. Dressage, Young Stock)</label><input type="text" id="nh-tag" value="General">
+    <label>Tag Color</label><input type="text" id="nh-color" value="#B5824A">
+    <label>Allergies</label><input type="text" id="nh-allergies">
+    <label>Conditions</label><textarea id="nh-conditions"></textarea>
+    <label>Notes</label><textarea id="nh-notes"></textarea>
+    <div class="btn-row"><button class="btn btn-primary" id="nh-save">Save Horse</button></div>
+  `);
+  let photoData = null;
+  const preview = document.getElementById('nh-photo-preview');
+  const input = document.getElementById('nh-photo-input');
+  preview.addEventListener('click', ()=>input.click());
+  input.addEventListener('change', async ()=>{
+    if(input.files[0]){ photoData = await compressImage(input.files[0]); preview.style.backgroundImage = `url(${photoData})`; preview.textContent=''; }
+  });
+  document.getElementById('nh-save').addEventListener('click', async ()=>{
+    const name = document.getElementById('nh-name').value.trim();
+    if(!name) return alert('Name is required');
+    const h = {
+      id: uid(), name,
+      registeredName: document.getElementById('nh-regname').value.trim(),
+      breeder: document.getElementById('nh-breeder').value.trim(),
+      birthDate: document.getElementById('nh-birthdate').value || null,
+      heightHH: parseFloat(document.getElementById('nh-height').value) || null,
+      breed: document.getElementById('nh-breed').value.trim(),
+      sex: document.getElementById('nh-sex').value.trim(),
+      color: document.getElementById('nh-color2').value.trim(),
+      markings: document.getElementById('nh-markings').value.trim(),
+      microchipNumber:'', registrationNumber:'',
+      breeding: document.getElementById('nh-breeding').value.trim(),
+      tagColor: document.getElementById('nh-color').value.trim() || '#B5824A',
+      tagLabel: document.getElementById('nh-tag').value.trim() || 'General', photo:photoData,
+      vetContext:{ allergies:document.getElementById('nh-allergies').value.trim(), conditions:document.getElementById('nh-conditions').value.trim(), meds:'', notes:document.getElementById('nh-notes').value.trim() },
+      careIntervals:{farrier:4, vet:26, bodywork:4}
+    };
+    STATE.horses.push(h);
+    STATE.horseData[h.id] = emptyHorseData();
+    await sSet('horses-roster', STATE.horses);
+    await sSet('horse-data:'+h.id, STATE.horseData[h.id]);
+    closeModal(); render();
+  });
+}
+function openEditProfile(id){
+  const h = STATE.horses.find(x=>x.id===id);
+  showModal(`
+    <h3>Edit Profile — ${h.name}</h3>
+    <label>Registered Name</label><input type="text" id="ep-regname" value="${h.registeredName||''}">
+    <label>Breeder</label><input type="text" id="ep-breeder" value="${h.breeder||''}">
+    <div class="field-row"><div><label>Birth Date</label><input type="date" id="ep-birthdate" value="${h.birthDate||''}"></div><div><label>Height (hh)</label><input type="number" step="0.1" id="ep-height" value="${h.heightHH||''}"></div></div>
+    <div class="field-row"><div><label>Registered Breed</label><input type="text" id="ep-breed" value="${h.breed||''}"></div><div><label>Sex</label><input type="text" id="ep-sex" value="${h.sex||''}"></div></div>
+    <div class="field-row"><div><label>Color</label><input type="text" id="ep-color" value="${h.color||''}"></div><div><label>Markings</label><input type="text" id="ep-markings" value="${h.markings||''}"></div></div>
+    <label>Breeding / Pedigree</label><input type="text" id="ep-breeding" value="${h.breeding||''}">
+    <div class="field-row"><div><label>Microchip #</label><input type="text" id="ep-microchip" value="${h.microchipNumber||''}"></div><div><label>Registration #</label><input type="text" id="ep-regnum" value="${h.registrationNumber||''}"></div></div>
+    <div class="btn-row"><button class="btn btn-primary" id="ep-save">Save Profile</button></div>
+  `);
+  document.getElementById('ep-save').addEventListener('click', async ()=>{
+    h.registeredName = document.getElementById('ep-regname').value.trim();
+    h.breeder = document.getElementById('ep-breeder').value.trim();
+    h.birthDate = document.getElementById('ep-birthdate').value || null;
+    h.heightHH = parseFloat(document.getElementById('ep-height').value) || null;
+    h.breed = document.getElementById('ep-breed').value.trim();
+    h.sex = document.getElementById('ep-sex').value.trim();
+    h.color = document.getElementById('ep-color').value.trim();
+    h.markings = document.getElementById('ep-markings').value.trim();
+    h.breeding = document.getElementById('ep-breeding').value.trim();
+    h.microchipNumber = document.getElementById('ep-microchip').value.trim();
+    h.registrationNumber = document.getElementById('ep-regnum').value.trim();
+    await sSet('horses-roster', STATE.horses);
+    closeModal(); renderScreen();
+  });
+}
+function openEditHorsePhoto(id){
+  const h = STATE.horses.find(x=>x.id===id);
+  showModal(`
+    <h3>Edit Photo — ${h.name}</h3>
+    <div class="photo-preview" id="eh-photo-preview" style="${h.photo?`background-image:url(${h.photo})`:''}">${h.photo?'':'Tap to choose photo'}</div>
+    <input type="file" accept="image/*" id="eh-photo-input" style="display:none;">
+    <div class="btn-row"><button class="btn btn-primary" id="eh-save">Save Photo</button></div>
+  `);
+  let photoData = h.photo;
+  const preview = document.getElementById('eh-photo-preview');
+  const input = document.getElementById('eh-photo-input');
+  preview.addEventListener('click', ()=>input.click());
+  input.addEventListener('change', async ()=>{
+    if(input.files[0]){ photoData = await compressImage(input.files[0]); preview.style.backgroundImage = `url(${photoData})`; preview.textContent=''; }
+  });
+  document.getElementById('eh-save').addEventListener('click', async ()=>{
+    h.photo = photoData;
+    await sSet('horses-roster', STATE.horses);
+    closeModal(); renderScreen();
+  });
+}
+
+/* ============================= HORSE DETAIL ============================= */
+function renderHorseDetail(id){
+  const h = STATE.horses.find(x=>x.id===id);
+  const hd = STATE.horseData[id];
+  return `
+    <button class="btn-sm" id="backBtn">\u2190 All Horses</button>
+    <div class="section-label" style="margin-top:14px;">— ${h.name} — <span class="add-link" id="editPhotoBtn">Change Photo</span></div>
+    <div class="photo-preview" style="${h.photo?`background-image:url(${h.photo})`:''}">${h.photo?'':'[ no photo ]'}</div>
+
+    <div class="section-label">— Profile — <span class="add-link" id="editProfile">Edit</span></div>
+    <div class="card">
+      <div class="row"><div class="name">Registered Name</div><div class="sub">${h.registeredName||'—'}</div></div>
+      <div class="row" style="margin-top:6px;"><div class="name">Breeder</div><div class="sub">${h.breeder||'—'}</div></div>
+      <div class="row" style="margin-top:6px;"><div class="name">Age</div><div class="sub">${ageFromBirthDate(h.birthDate)||'Unknown'}</div></div>
+      <div class="row" style="margin-top:6px;"><div class="name">Height</div><div class="sub">${h.heightHH?h.heightHH+'hh':'Unknown'}</div></div>
+      <div class="row" style="margin-top:6px;"><div class="name">Registered Breed</div><div class="sub">${h.breed||'—'}</div></div>
+      <div class="row" style="margin-top:6px;"><div class="name">Sex</div><div class="sub">${h.sex||'—'}</div></div>
+      <div class="row" style="margin-top:6px;"><div class="name">Color</div><div class="sub">${h.color||'—'}</div></div>
+      <div class="row" style="margin-top:6px;"><div class="name">Markings</div><div class="sub">${h.markings||'—'}</div></div>
+      ${h.microchipNumber?`<div class="row" style="margin-top:6px;"><div class="name">Microchip</div><div class="sub">${h.microchipNumber}</div></div>`:''}
+      ${h.registrationNumber?`<div class="row" style="margin-top:6px;"><div class="name">Registration #</div><div class="sub">${h.registrationNumber}</div></div>`:''}
+      <div class="row" style="margin-top:6px;"><div class="name">Breeding</div></div><div class="sub">${h.breeding||'No pedigree on file'}</div>
+    </div>
+
+    <div class="section-label">— Photo Timeline — <span class="add-link" id="addPhotoLog">+ Add Photo</span></div>
+    ${renderPhotoGallery(hd.photoLog)}
+
+    <div class="section-label">— ${h.name} · Vet Context —</div>
+    <div class="card">
+      <div class="row"><div class="name">Allergies</div></div><div class="sub" style="margin-bottom:8px;">${h.vetContext.allergies||'None recorded'}</div>
+      <div class="row"><div class="name">Conditions</div></div><div class="sub" style="margin-bottom:8px;">${h.vetContext.conditions||'None recorded'}</div>
+      <div class="row"><div class="name">Notes</div></div><div class="sub">${h.vetContext.notes||'—'}</div>
+      <div class="btn-row"><button class="btn-sm" id="editVetCtx">Edit</button></div>
+    </div>
+
+    <div class="section-label">— Feeding Plan — <span class="add-link" id="editFeedPlan">Edit</span></div>
+    <div class="card">
+      ${renderFeedRecipe(hd.feedingPlan)}
+    </div>
+
+    <div class="section-label">— Meds — <span class="add-link" id="addMed">+ Add</span></div>
+    ${(hd.medsPlan||[]).length? hd.medsPlan.map(m=>`<div class="card row"><div><div class="name">${m.name}</div><div class="sub">${m.dose}${m.unit} · ${m.timing}${m.notes?' · '+m.notes:''}</div></div></div>`).join('') : '<div class="empty">No meds on file.</div>'}
+
+    <div class="section-label">— BCS & Weight — <span class="add-link" id="addBcs">+ Log Entry</span></div>
+    ${renderBcsChart(hd.bcsLog)}
+
+    <div class="section-label">— Care Due — <span class="add-link" id="editIntervals">Edit Intervals</span></div>
+    <div class="card">
+      ${['farrier','vet','bodywork'].map(type=>{
+        const info = nextDueInfo(hd, h, type);
+        if(!info) return '';
+        const pillClass = info.status==='overdue' ? 'low' : (info.status==='soon' ? 'low' : (info.status==='none' ? 'neutral' : 'ok'));
+        return `<div class="row" style="margin-bottom:6px;"><div class="name" style="text-transform:capitalize;">${type}</div><div class="pill ${pillClass}">${info.label}</div></div>`;
+      }).join('')}
+    </div>
+
+    <div class="section-label">— Vet / Farrier / Bodywork Records — <span class="add-link" id="addVetRecord">+ Add</span></div>
+    ${(hd.vetRecords||[]).length? hd.vetRecords.slice().reverse().map(v=>`
+      <div class="timeline-item"><div class="timeline-date">${fmtDate(v.date)}</div><div class="timeline-author">${v.type.toUpperCase()}</div><div class="timeline-content">${v.notes}</div></div>
+    `).join('') : '<div class="empty">No records yet.</div>'}
+
+    <div class="section-label">— Feed Transitions — <span class="add-link" id="addTransition">+ New Transition</span></div>
+    ${renderTransitions(hd)}
+
+    <div class="section-label">— Training Notes — <span class="add-link" id="addTrainingNote">+ Add</span></div>
+    ${(hd.trainingNotes||[]).length? hd.trainingNotes.slice().reverse().map(n=>`
+      <div class="timeline-item"><div class="timeline-date">${fmtDate(n.date)}</div><div class="timeline-author">${n.author}${n.source==='direct-response'?' (via request link)':''}</div><div class="timeline-content">${n.content}</div></div>
+    `).join('') : '<div class="empty">No training notes yet.</div>'}
+
+    <div class="section-label">— Request Update From Stakeholder —</div>
+    <div class="quick-row">
+      <div class="quick-btn" data-req="trainer"><span class="quick-icon">🏇</span><span class="quick-label">Trainer</span></div>
+      <div class="quick-btn" data-req="vet"><span class="quick-icon">🩺</span><span class="quick-label">Vet</span></div>
+      <div class="quick-btn" data-req="farrier"><span class="quick-icon">🔨</span><span class="quick-label">Farrier</span></div>
+      <div class="quick-btn" data-req="bodywork"><span class="quick-icon">💆</span><span class="quick-label">Bodywork</span></div>
+    </div>
+  `;
+}
+function attachHorseDetailHandlers(id){
+  document.getElementById('backBtn').addEventListener('click', ()=>{ ACTIVE_HORSE=null; renderScreen(); });
+  document.getElementById('editPhotoBtn').addEventListener('click', ()=>openEditHorsePhoto(id));
+  document.getElementById('editProfile').addEventListener('click', ()=>openEditProfile(id));
+  document.getElementById('addPhotoLog').addEventListener('click', ()=>openAddPhotoLog(id));
+  document.querySelectorAll('[data-gallery-photo]').forEach(img=>img.addEventListener('click', ()=>openPhotoLightbox(img.dataset.galleryPhoto, img.dataset.galleryCaption)));
+  document.getElementById('editVetCtx').addEventListener('click', ()=>openEditVetContext(id));
+  document.getElementById('editFeedPlan').addEventListener('click', ()=>openEditFeedingPlan(id));
+  document.getElementById('addMed').addEventListener('click', ()=>openAddMed(id));
+  document.getElementById('addBcs').addEventListener('click', ()=>openAddBcs(id));
+  document.getElementById('addVetRecord').addEventListener('click', ()=>openAddVetRecord(id));
+  document.getElementById('editIntervals').addEventListener('click', ()=>openEditIntervals(id));
+  document.getElementById('addTransition').addEventListener('click', ()=>openAddTransition(id));
+  document.querySelectorAll('[data-cancel-transition]').forEach(b=>b.addEventListener('click', ()=>cancelTransition(id, b.dataset.cancelTransition)));
+  document.getElementById('addTrainingNote').addEventListener('click', ()=>openAddTrainingNote(id));
+  document.querySelectorAll('[data-req]').forEach(b=>b.addEventListener('click', ()=>openRequestModal(id, b.dataset.req)));
+}
+
+function renderBcsChart(log){
+  if(!log || log.length===0) return '<div class="empty">No entries yet.</div>';
+  const w=400,h=110,pad=24;
+  const weights = log.map(l=>l.weight);
+  const min=Math.min(...weights)-20, max=Math.max(...weights)+20;
+  const pts = log.map((l,i)=>{
+    const x = pad + (i/(Math.max(log.length-1,1)))*(w-pad*2);
+    const y = h - pad - ((l.weight-min)/(max-min))*(h-pad*1.5);
+    return `${x},${y}`;
+  }).join(' ');
+  return `<div class="chart-wrap">
+    <svg viewBox="0 0 ${w} ${h}" style="width:100%; height:110px;">
+      <polyline points="${pts}" fill="none" stroke="#B5824A" stroke-width="2"/>
+      ${log.map((l,i)=>{ const x = pad + (i/(Math.max(log.length-1,1)))*(w-pad*2); const y = h - pad - ((l.weight-min)/(max-min))*(h-pad*1.5); return `<circle cx="${x}" cy="${y}" r="3" fill="#1F2E23"/>`; }).join('')}
+    </svg>
+    <div class="sub">Latest: ${log[log.length-1].weight} lb · BCS ${log[log.length-1].score}/9 (${fmtDate(log[log.length-1].date)})</div>
+  </div>`;
+}
+
+function renderPhotoGallery(photoLog){
+  if(!photoLog || photoLog.length===0) return '<div class="empty">No photos logged yet.</div>';
+  const sorted = photoLog.slice().sort((a,b)=>b.date.localeCompare(a.date));
+  return `<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px;">
+    ${sorted.map(p=>`
+      <div data-gallery-photo="${p.photo}" data-gallery-caption="${fmtDate(p.date)}${p.caption?' — '+p.caption.replace(/"/g,'&quot;'):''}" style="aspect-ratio:1; background-image:url(${p.photo}); background-size:cover; background-position:center; border-radius:4px; position:relative; cursor:pointer; border:1px solid var(--paper);">
+        <div style="position:absolute; bottom:0; left:0; right:0; background:rgba(31,46,35,.75); color:#fff; font-family:'JetBrains Mono',monospace; font-size:8px; padding:2px 4px;">${fmtDate(p.date)}</div>
+      </div>
+    `).join('')}
+  </div>`;
+}
+function openPhotoLightbox(photo, caption){
+  showModal(`
+    <h3>${caption}</h3>
+    <div class="photo-preview" style="height:320px; background-image:url(${photo});"></div>
+  `);
+}
+function openAddPhotoLog(id){
+  const hd = STATE.horseData[id];
+  showModal(`
+    <h3>Add Photo to Timeline</h3>
+    <div class="photo-preview" id="apl-preview">Tap to choose photo</div>
+    <input type="file" accept="image/*" id="apl-input" style="display:none;">
+    <label>Date</label><input type="date" id="apl-date" value="${todayStr()}">
+    <label>Caption (optional)</label><input type="text" id="apl-caption">
+    <div class="btn-row"><button class="btn btn-primary" id="apl-save">Save Photo</button></div>
+  `);
+  let photoData = null;
+  const preview = document.getElementById('apl-preview');
+  const input = document.getElementById('apl-input');
+  preview.addEventListener('click', ()=>input.click());
+  input.addEventListener('change', async ()=>{
+    if(input.files[0]){ photoData = await compressImage(input.files[0]); preview.style.backgroundImage = `url(${photoData})`; preview.textContent=''; }
+  });
+  document.getElementById('apl-save').addEventListener('click', async ()=>{
+    if(!photoData) return alert('Choose a photo first');
+    hd.photoLog = hd.photoLog || [];
+    hd.photoLog.push({ id:uid(), date:document.getElementById('apl-date').value||todayStr(), photo:photoData, caption:document.getElementById('apl-caption').value.trim() });
+    await sSet('horse-data:'+id, hd);
+    closeModal(); renderScreen();
+  });
+}
+
+function openEditIntervals(id){
+  const h = STATE.horses.find(x=>x.id===id);
+  const ci = h.careIntervals || {farrier:4, vet:26, bodywork:4};
+  showModal(`
+    <h3>Care Intervals — ${h.name}</h3>
+    <label>Farrier (weeks)</label><input type="number" id="ci-farrier" value="${ci.farrier}">
+    <label>Vet (weeks)</label><input type="number" id="ci-vet" value="${ci.vet}">
+    <label>Bodywork (weeks)</label><input type="number" id="ci-bodywork" value="${ci.bodywork}">
+    <div class="btn-row"><button class="btn btn-primary" id="ci-save">Save Intervals</button></div>
+  `);
+  document.getElementById('ci-save').addEventListener('click', async ()=>{
+    h.careIntervals = { farrier: parseFloat(document.getElementById('ci-farrier').value)||4, vet: parseFloat(document.getElementById('ci-vet').value)||26, bodywork: parseFloat(document.getElementById('ci-bodywork').value)||4 };
+    await sSet('horses-roster', STATE.horses);
+    closeModal(); renderScreen();
+  });
+}
+
+/* ---- Feed Transitions (titration planner) ---- */
+function computeTransitionSchedule(t){
+  const weeks = [];
+  for(let w=1; w<=t.weeks; w++){
+    const frac = w/t.weeks;
+    weeks.push({ week:w, newAmt: +(t.startAmt + (t.targetAmt-t.startAmt)*frac).toFixed(2), oldAmt: t.replaces ? +(t.replacesAmt*(1-frac)).toFixed(2) : null });
+  }
+  return weeks;
+}
+function currentTransitionWeek(t){
+  const daysIn = daysBetween(t.startDate, todayStr());
+  if(daysIn < 0) return 0;
+  return Math.max(1, Math.min(t.weeks, Math.floor(daysIn/7)+1));
+}
+function renderTransitions(hd){
+  const active = (hd.transitions||[]).filter(t=>t.status!=='cancelled');
+  if(active.length===0) return '<div class="empty">No feed transitions in progress.</div>';
+  return active.map(t=>{
+    const schedule = computeTransitionSchedule(t);
+    const curWeek = t.status==='complete' ? t.weeks : currentTransitionWeek(t);
+    const statusLabel = t.status==='complete' ? 'Complete' : (curWeek===0 ? 'Starts '+fmtDate(t.startDate) : 'Week '+curWeek+' of '+t.weeks);
+    return `
+      <div class="card">
+        <div class="row"><div class="name">${t.itemName}${t.replaces?' (replacing '+t.replaces+')':''}</div><div class="pill ${t.status==='complete'?'ok':'neutral'}">${statusLabel}</div></div>
+        <div class="sub" style="margin-top:6px;">Target: ${t.targetAmt}${t.unit} · ${t.timing} · starts ${fmtDate(t.startDate)}</div>
+        <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;">
+          ${schedule.map(s=>`<div class="tag" style="cursor:default; ${s.week===curWeek?'background:var(--brass); color:#fff; border-color:var(--brass);':''}">Wk${s.week}: ${s.newAmt}${t.unit}${t.replaces?' / old '+s.oldAmt:''}</div>`).join('')}
+        </div>
+        ${t.status!=='complete' ? `<div class="btn-row"><button class="btn-sm" data-cancel-transition="${t.id}">Cancel Transition</button></div>` : ''}
+      </div>`;
+  }).join('');
+}
+function openAddTransition(id){
+  const hd = STATE.horseData[id];
+  const existingItems = [...new Set([...(hd.feedingPlan.AM||[]), ...(hd.feedingPlan.PM||[])].map(i=>i.name))];
+  showModal(`
+    <h3>New Feed Transition</h3>
+    <label>New Feed Name</label><input type="text" id="tr-name">
+    <div class="field-row"><div><label>Target Amount (total/day)</label><input type="number" step="0.1" id="tr-target"></div><div><label>Unit</label><input type="text" id="tr-unit" value="lb"></div></div>
+    <label>Timing</label>
+    <select id="tr-timing"><option value="AM">AM only</option><option value="PM">PM only</option><option value="Both">Both (split evenly)</option></select>
+    <label>Weeks to Ramp</label><input type="number" id="tr-weeks" value="2" min="1">
+    <label>Replacing an existing item? (optional)</label>
+    <select id="tr-replaces"><option value="">— None —</option>${existingItems.map(n=>`<option value="${n}">${n}</option>`).join('')}</select>
+    <div class="btn-row"><button class="btn btn-primary" id="tr-save">Start Transition</button></div>
+  `);
+  document.getElementById('tr-save').addEventListener('click', async ()=>{
+    const name = document.getElementById('tr-name').value.trim();
+    if(!name) return alert('Feed name required');
+    const replaces = document.getElementById('tr-replaces').value;
+    let replacesAmt = 0;
+    if(replaces){
+      const amAmt = (hd.feedingPlan.AM||[]).find(i=>i.name===replaces);
+      const pmAmt = (hd.feedingPlan.PM||[]).find(i=>i.name===replaces);
+      replacesAmt = (amAmt?amAmt.amt:0) + (pmAmt?pmAmt.amt:0);
+    }
+    const t = {
+      id: uid(), itemName:name, targetAmt: parseFloat(document.getElementById('tr-target').value)||0,
+      unit: document.getElementById('tr-unit').value.trim()||'lb', timing: document.getElementById('tr-timing').value,
+      weeks: parseInt(document.getElementById('tr-weeks').value)||2, startDate: todayStr(), startAmt:0,
+      replaces: replaces||null, replacesAmt, status:'active'
+    };
+    hd.transitions = hd.transitions || [];
+    hd.transitions.push(t);
+    applyTransitionToFeedingPlan(hd, t);
+    await sSet('horse-data:'+id, hd);
+    closeModal(); renderScreen();
+  });
+}
+function applyTransitionToFeedingPlan(hd, t){
+  const week = t.status==='complete' ? t.weeks : currentTransitionWeek(t);
+  const frac = week/t.weeks;
+  const amt = +(t.startAmt + (t.targetAmt-t.startAmt)*frac).toFixed(2);
+  const timings = t.timing==='Both' ? ['AM','PM'] : [t.timing];
+  const perTiming = t.timing==='Both' ? +(amt/2).toFixed(2) : amt;
+  timings.forEach(tm=>{
+    hd.feedingPlan[tm] = hd.feedingPlan[tm] || [];
+    let existing = hd.feedingPlan[tm].find(i=>i.transitionId===t.id);
+    if(existing) existing.amt = perTiming;
+    else hd.feedingPlan[tm].push({ name:t.itemName, amt:perTiming, unit:t.unit, transitionId:t.id });
+  });
+  if(t.replaces){
+    const oldAmt = +(t.replacesAmt*(1-frac)).toFixed(2);
+    ['AM','PM'].forEach(tm=>{
+      const item = (hd.feedingPlan[tm]||[]).find(i=>i.name===t.replaces && !i.transitionId);
+      if(item) item.amt = Math.max(0, oldAmt / (t.timing==='Both'?2: (hd.feedingPlan.AM.find(i=>i.name===t.replaces)&&hd.feedingPlan.PM.find(i=>i.name===t.replaces)?2:1)));
+    });
+  }
+  if(week>=t.weeks) t.status='complete';
+}
+async function runTransitionUpdates(){
+  let changed = [];
+  for(const h of STATE.horses){
+    const hd = STATE.horseData[h.id];
+    if(!hd || !hd.transitions) continue;
+    let touched = false;
+    hd.transitions.filter(t=>t.status==='active').forEach(t=>{ applyTransitionToFeedingPlan(hd, t); touched = true; });
+    if(touched) changed.push(h.id);
+  }
+  for(const id of changed) await sSet('horse-data:'+id, STATE.horseData[id]);
+}
+async function cancelTransition(horseId, transitionId){
+  const hd = STATE.horseData[horseId];
+  const t = hd.transitions.find(x=>x.id===transitionId);
+  if(!t) return;
+  t.status = 'cancelled';
+  ['AM','PM'].forEach(tm=>{ hd.feedingPlan[tm] = (hd.feedingPlan[tm]||[]).filter(i=>i.transitionId!==transitionId); });
+  await sSet('horse-data:'+horseId, hd);
+  renderScreen();
+}
+
+/* ---- horse detail modals ---- */
+function openEditVetContext(id){
+  const h = STATE.horses.find(x=>x.id===id);
+  showModal(`
+    <h3>Edit Vet Context — ${h.name}</h3>
+    <label>Allergies</label><input type="text" id="ev-allergies" value="${h.vetContext.allergies||''}">
+    <label>Conditions</label><textarea id="ev-conditions">${h.vetContext.conditions||''}</textarea>
+    <label>Notes</label><textarea id="ev-notes">${h.vetContext.notes||''}</textarea>
+    <div class="btn-row"><button class="btn btn-primary" id="ev-save">Save</button></div>
+  `);
+  document.getElementById('ev-save').addEventListener('click', async ()=>{
+    h.vetContext.allergies = document.getElementById('ev-allergies').value.trim();
+    h.vetContext.conditions = document.getElementById('ev-conditions').value.trim();
+    h.vetContext.notes = document.getElementById('ev-notes').value.trim();
+    await sSet('horses-roster', STATE.horses);
+    closeModal(); renderScreen();
+  });
+}
+function openEditFeedingPlan(id){
+  const hd = STATE.horseData[id];
+  const rowHtml = (list,timing)=> (list||[]).filter(it=>!it.transitionId).map((it,idx)=>`
+    <div class="field-row" style="margin-bottom:6px;" data-row="${timing}-${idx}">
+      <div><input type="text" class="fp-name" value="${it.name}" placeholder="Item"></div>
+      <div style="max-width:70px;"><input type="number" step="0.1" class="fp-amt" value="${it.amt}"></div>
+      <div style="max-width:60px;"><input type="text" class="fp-unit" value="${it.unit}"></div>
+      <button class="btn-sm fp-remove" data-timing="${timing}" data-idx="${idx}">✕</button>
+    </div>`).join('');
+  const lockedHtml = (list)=> (list||[]).filter(it=>it.transitionId).map(it=>`
+    <div class="sub" style="margin:4px 0; font-style:italic;">🔒 ${it.name} — ${it.amt}${it.unit} (auto-adjusting via Feed Transition, edit under "Feed Transitions" instead)</div>
+  `).join('');
+  showModal(`
+    <h3>Edit Feeding Plan</h3>
+    <label>AM Items</label><div id="fp-am">${rowHtml(hd.feedingPlan.AM,'AM')}</div>
+    ${lockedHtml(hd.feedingPlan.AM)}
+    <button class="btn-sm" id="fp-add-am">+ Add AM Item</button>
+    <label>PM Items</label><div id="fp-pm">${rowHtml(hd.feedingPlan.PM,'PM')}</div>
+    ${lockedHtml(hd.feedingPlan.PM)}
+    <button class="btn-sm" id="fp-add-pm">+ Add PM Item</button>
+    <div class="btn-row"><button class="btn btn-primary" id="fp-save">Save Feeding Plan</button></div>
+  `);
+  function addRow(timing){
+    const container = document.getElementById('fp-'+timing.toLowerCase());
+    const idx = container.children.length;
+    const d = document.createElement('div');
+    d.className='field-row'; d.style.marginBottom='6px';
+    d.innerHTML = `<div><input type="text" class="fp-name" placeholder="Item"></div><div style="max-width:70px;"><input type="number" step="0.1" class="fp-amt" value="0"></div><div style="max-width:60px;"><input type="text" class="fp-unit" value="lb"></div><button class="btn-sm fp-remove">✕</button>`;
+    container.appendChild(d);
+    d.querySelector('.fp-remove').addEventListener('click', ()=>d.remove());
+  }
+  document.getElementById('fp-add-am').addEventListener('click', ()=>addRow('AM'));
+  document.getElementById('fp-add-pm').addEventListener('click', ()=>addRow('PM'));
+  document.querySelectorAll('.fp-remove').forEach(b=>b.addEventListener('click', e=>e.target.closest('.field-row').remove()));
+  document.getElementById('fp-save').addEventListener('click', async ()=>{
+    function readList(containerId){
+      const rows = document.querySelectorAll('#'+containerId+' .field-row');
+      const out = [];
+      rows.forEach(r=>{
+        const name = r.querySelector('.fp-name').value.trim();
+        const amt = parseFloat(r.querySelector('.fp-amt').value)||0;
+        const unit = r.querySelector('.fp-unit').value.trim()||'lb';
+        if(name) out.push({name,amt,unit});
+      });
+      return out;
+    }
+    const lockedAM = (hd.feedingPlan.AM||[]).filter(it=>it.transitionId);
+    const lockedPM = (hd.feedingPlan.PM||[]).filter(it=>it.transitionId);
+    hd.feedingPlan.AM = [...readList('fp-am'), ...lockedAM];
+    hd.feedingPlan.PM = [...readList('fp-pm'), ...lockedPM];
+    await sSet('horse-data:'+id, hd);
+    closeModal(); renderScreen();
+  });
+}
+function openAddMed(id){
+  const hd = STATE.horseData[id];
+  showModal(`
+    <h3>Add Medication</h3>
+    <label>Name</label><input type="text" id="med-name">
+    <div class="field-row"><div><label>Dose</label><input type="number" step="0.1" id="med-dose"></div><div><label>Unit</label><input type="text" id="med-unit" value="ml"></div></div>
+    <label>Timing</label>
+    <select id="med-timing"><option>AM</option><option>PM</option><option>Both</option><option>Custom</option></select>
+    <label>Notes</label><textarea id="med-notes"></textarea>
+    <div class="btn-row"><button class="btn btn-primary" id="med-save">Save Med</button></div>
+  `);
+  document.getElementById('med-save').addEventListener('click', async ()=>{
+    const name = document.getElementById('med-name').value.trim();
+    if(!name) return alert('Name required');
+    hd.medsPlan = hd.medsPlan || [];
+    hd.medsPlan.push({ id:uid(), name, dose:parseFloat(document.getElementById('med-dose').value)||0, unit:document.getElementById('med-unit').value.trim(), timing:document.getElementById('med-timing').value, notes:document.getElementById('med-notes').value.trim() });
+    await sSet('horse-data:'+id, hd);
+    closeModal(); renderScreen();
+  });
+}
+function openAddBcs(id){
+  const hd = STATE.horseData[id];
+  showModal(`
+    <h3>Log BCS & Weight</h3>
+    <label>Date</label><input type="date" id="bcs-date" value="${todayStr()}">
+    <div class="field-row"><div><label>BCS (1-9)</label><input type="number" step="0.5" min="1" max="9" id="bcs-score"></div><div><label>Weight (lb)</label><input type="number" id="bcs-weight"></div></div>
+    <label>Notes</label><textarea id="bcs-notes"></textarea>
+    <div class="btn-row"><button class="btn btn-primary" id="bcs-save">Save Entry</button></div>
+  `);
+  document.getElementById('bcs-save').addEventListener('click', async ()=>{
+    hd.bcsLog = hd.bcsLog || [];
+    hd.bcsLog.push({ date:document.getElementById('bcs-date').value||todayStr(), score:parseFloat(document.getElementById('bcs-score').value)||0, weight:parseFloat(document.getElementById('bcs-weight').value)||0, notes:document.getElementById('bcs-notes').value.trim() });
+    hd.bcsLog.sort((a,b)=>a.date.localeCompare(b.date));
+    await sSet('horse-data:'+id, hd);
+    closeModal(); renderScreen();
+  });
+}
+function openAddVetRecord(id){
+  const hd = STATE.horseData[id];
+  showModal(`
+    <h3>Add Vet / Farrier / Bodywork Record</h3>
+    <label>Type</label>
+    <select id="vr-type"><option value="vet">Vet</option><option value="farrier">Farrier</option><option value="bodywork">Bodywork</option></select>
+    <label>Date</label><input type="date" id="vr-date" value="${todayStr()}">
+    <label>Notes</label><textarea id="vr-notes"></textarea>
+    <div class="btn-row"><button class="btn btn-primary" id="vr-save">Save Record</button></div>
+  `);
+  document.getElementById('vr-save').addEventListener('click', async ()=>{
+    hd.vetRecords = hd.vetRecords || [];
+    hd.vetRecords.push({ id:uid(), type:document.getElementById('vr-type').value, date:document.getElementById('vr-date').value||todayStr(), notes:document.getElementById('vr-notes').value.trim() });
+    await sSet('horse-data:'+id, hd);
+    closeModal(); renderScreen();
+  });
+}
+function openAddTrainingNote(id){
+  const hd = STATE.horseData[id];
+  showModal(`
+    <h3>Add Training Note</h3>
+    <label>Date</label><input type="date" id="tn-date" value="${todayStr()}">
+    <label>Note</label><textarea id="tn-content"></textarea>
+    <div class="btn-row"><button class="btn btn-primary" id="tn-save">Save Note</button></div>
+  `);
+  document.getElementById('tn-save').addEventListener('click', async ()=>{
+    hd.trainingNotes = hd.trainingNotes || [];
+    hd.trainingNotes.push({ id:uid(), date:document.getElementById('tn-date').value||todayStr(), author:'Lauren', content:document.getElementById('tn-content').value.trim(), source:'manual' });
+    await sSet('horse-data:'+id, hd);
+    closeModal(); renderScreen();
+  });
+}
+
+function renderFeedRecipe(feedingPlan){
+  function block(list, label){
+    if(!list || list.length===0) return `<div class="name">${label}</div><div class="sub">—</div>`;
+    return `<div class="name">${label}</div>` + list.map(i=>
+      `<div class="sub" style="margin:2px 0;">\u2022 ${i.name}: <strong>${i.amt}${i.unit}</strong>${i.transitionId?' <span style="color:var(--brass);">(ramping)</span>':''}</div>`
+    ).join('');
+  }
+  return block(feedingPlan.AM, 'AM') + `<div style="margin-top:10px;"></div>` + block(feedingPlan.PM, 'PM');
+}
+function renderFeed(){
+  const today = todayStr();
+  const bagRows = STATE.horses.map(h=>{
+    const hd = STATE.horseData[h.id];
+    const skipped = (hd.skipDates||[]).includes(today);
+    const medsAM = (hd.medsPlan||[]).filter(m=>m.timing==='AM'||m.timing==='Both').map(m=>({name:m.name, amt:m.dose, unit:m.unit}));
+    const medsPM = (hd.medsPlan||[]).filter(m=>m.timing==='PM'||m.timing==='Both').map(m=>({name:m.name, amt:m.dose, unit:m.unit}));
+    const combinedPlan = { AM:[...(hd.feedingPlan.AM||[]), ...medsAM], PM:[...(hd.feedingPlan.PM||[]), ...medsPM] };
+    const days = hd.preparedBags.daysRemaining;
+    return `
+      <div class="card">
+        <div class="row">
+          <div><div class="name">${h.name}</div><div class="sub">Bags at barn: <span style="color:${days<2?'#8C2F2F':'#3D5A42'}; font-weight:600;">${days} days left</span></div></div>
+          <button class="btn-sm" data-prep="${h.id}">Prep More</button>
+        </div>
+        <label class="toggle" style="margin:8px 0 0;"><input type="checkbox" class="skip-toggle" data-horse="${h.id}" ${skipped?'checked':''}> Skip today (no bags used)</label>
+        <div style="margin-top:8px;">${renderFeedRecipe(combinedPlan)}</div>
+        <div class="btn-row"><button class="btn-sm" data-editplan="${h.id}">Edit Feeding Plan</button></div>
+      </div>`;
+  }).join('');
+
+  const invRows = STATE.inventory.items.map(it=>{
+    const use = dailyUsage(it.name);
+    const daysLeft = use>0 ? Math.floor(it.qtyOnHand/use) : null;
+    const low = daysLeft!==null && daysLeft<=it.reorderDays;
+    return `<div class="card row" data-editinv="${it.id}" style="cursor:pointer;">
+      <div><div class="name">${it.name}</div><div class="sub">${it.qtyOnHand} ${it.unit} on hand · ${use} ${it.unit}/day across all horses</div></div>
+      <div class="pill ${low?'low':'ok'}">${daysLeft!==null? daysLeft+' DAYS' : 'N/A'}</div>
+    </div>`;
+  }).join('');
+
+  return `
+    <div class="section-label">— Prepared Bags at the Barn — <span class="add-link">${fmtDate(today)}</span></div>
+    ${bagRows}
+    <div class="banner">Prepared bags debit by 1 day automatically each day, whether or not anyone logs a feeding. When you drop a fresh batch at the barn, tap "Prep More" — that's the only thing that pulls from raw backstock below.</div>
+    <div class="section-label">— Raw Backstock — <span class="add-link" id="addInv">+ Add Item</span></div>
+    ${invRows || '<div class="empty">No inventory items yet.</div>'}
+  `;
+}
+function attachFeedHandlers(){
+  document.querySelectorAll('.skip-toggle').forEach(cb=>cb.addEventListener('change', async e=>{
+    const hd = STATE.horseData[e.target.dataset.horse];
+    hd.skipDates = hd.skipDates || [];
+    const today = todayStr();
+    if(e.target.checked){ if(!hd.skipDates.includes(today)) hd.skipDates.push(today); }
+    else { hd.skipDates = hd.skipDates.filter(d=>d!==today); }
+    await sSet('horse-data:'+e.target.dataset.horse, hd);
+  }));
+  document.querySelectorAll('[data-prep]').forEach(b=>b.addEventListener('click', ()=>openPrepBagsModal(b.dataset.prep)));
+  document.querySelectorAll('[data-editplan]').forEach(b=>b.addEventListener('click', ()=>openEditFeedingPlan(b.dataset.editplan)));
+  document.querySelectorAll('[data-editinv]').forEach(c=>c.addEventListener('click', ()=>openEditInventoryItem(c.dataset.editinv)));
+  const addInv = document.getElementById('addInv'); if(addInv) addInv.addEventListener('click', openAddInventoryItem);
+}
+function openEditInventoryItem(itemId){
+  const it = STATE.inventory.items.find(x=>x.id===itemId);
+  showModal(`
+    <h3>Adjust Stock — ${it.name}</h3>
+    <div class="field-row"><div><label>Qty On Hand</label><input type="number" step="0.1" id="ei-qty" value="${it.qtyOnHand}"></div><div><label>Unit</label><input type="text" id="ei-unit" value="${it.unit}"></div></div>
+    <label>Reorder Threshold (days remaining)</label><input type="number" id="ei-reorder" value="${it.reorderDays}">
+    <div class="btn-row"><button class="btn btn-primary" id="ei-save">Save</button></div>
+    <div class="btn-row"><button class="btn-sm" id="ei-delete" style="color:#8C2F2F;">Remove Item</button></div>
+  `);
+  document.getElementById('ei-save').addEventListener('click', async ()=>{
+    it.qtyOnHand = parseFloat(document.getElementById('ei-qty').value)||0;
+    it.unit = document.getElementById('ei-unit').value.trim()||it.unit;
+    it.reorderDays = parseFloat(document.getElementById('ei-reorder').value)||5;
+    await sSet('inventory', STATE.inventory);
+    closeModal(); renderScreen();
+  });
+  document.getElementById('ei-delete').addEventListener('click', async ()=>{
+    STATE.inventory.items = STATE.inventory.items.filter(x=>x.id!==itemId);
+    await sSet('inventory', STATE.inventory);
+    closeModal(); renderScreen();
+  });
+}
+function openPrepBagsModal(horseId){
+  showModal(`
+    <h3>Prep Bags</h3>
+    <label>Horse</label>
+    <select id="pb-horse">${STATE.horses.map(h=>`<option value="${h.id}" ${h.id===horseId?'selected':''}>${h.name}</option>`).join('')}</select>
+    <label>Days worth to prepare</label>
+    <input type="number" id="pb-days" value="7" min="1">
+    <div id="pb-recipe" class="card" style="margin-top:10px;"></div>
+    <div id="pb-preview" class="sub" style="margin-top:10px;"></div>
+    <div class="btn-row"><button class="btn btn-primary" id="pb-save">Prep & Deduct from Backstock</button></div>
+    <div id="pb-result"></div>
+  `);
+  function updatePreview(){
+    const hId = document.getElementById('pb-horse').value;
+    const days = parseFloat(document.getElementById('pb-days').value)||0;
+    const hd = STATE.horseData[hId];
+    document.getElementById('pb-recipe').innerHTML = `
+      <div class="name" style="margin-bottom:4px;">Recipe — each single AM bag / each single PM bag</div>
+      ${renderFeedRecipe(hd.feedingPlan)}
+      ${(hd.transitions||[]).some(t=>t.status==='active') ? `<div class="sub" style="margin-top:8px; color:#8C2F2F;">⚠ Active feed transition on this horse — this recipe is today's ratio only. If your prep window crosses a weekly step-up date, portion those later bags separately once the amount updates.</div>` : ''}
+    `;
+    const items = [...(hd.feedingPlan.AM||[]), ...(hd.feedingPlan.PM||[])];
+    const needed = {};
+    items.forEach(it=>{ needed[it.name] = (needed[it.name]||0) + it.amt*days; });
+    document.getElementById('pb-preview').innerHTML = `Backstock needed for ${days} days: ` + Object.keys(needed).map(n=>`${n} (${needed[n].toFixed(2)})`).join(', ');
+  }
+  document.getElementById('pb-horse').addEventListener('change', updatePreview);
+  document.getElementById('pb-days').addEventListener('input', updatePreview);
+  updatePreview();
+  document.getElementById('pb-save').addEventListener('click', async ()=>{
+    const hId = document.getElementById('pb-horse').value;
+    const days = parseFloat(document.getElementById('pb-days').value)||0;
+    const result = await prepBags(hId, days);
+    if(!result.ok){
+      document.getElementById('pb-result').innerHTML = `<div class="banner" style="background:#8C2F2F;">Not enough backstock for: ${result.shortfalls.join(', ')}. Add stock first.</div>`;
+    } else {
+      closeModal(); renderScreen();
+    }
+  });
+}
+function openAddInventoryItem(){
+  showModal(`
+    <h3>Add Inventory Item</h3>
+    <label>Name (must match feeding plan item name to auto-debit)</label><input type="text" id="inv-name">
+    <div class="field-row"><div><label>Unit</label><input type="text" id="inv-unit" value="lb"></div><div><label>Qty On Hand</label><input type="number" id="inv-qty"></div></div>
+    <label>Reorder Threshold (days remaining)</label><input type="number" id="inv-reorder" value="5">
+    <div class="btn-row"><button class="btn btn-primary" id="inv-save">Save Item</button></div>
+  `);
+  document.getElementById('inv-save').addEventListener('click', async ()=>{
+    const name = document.getElementById('inv-name').value.trim();
+    if(!name) return alert('Name required');
+    STATE.inventory.items.push({ id:uid(), name, unit:document.getElementById('inv-unit').value.trim()||'lb', qtyOnHand:parseFloat(document.getElementById('inv-qty').value)||0, reorderDays:parseFloat(document.getElementById('inv-reorder').value)||5 });
+    await sSet('inventory', STATE.inventory);
+    closeModal(); renderScreen();
+  });
+}
+
+/* ============================= CARE TAB (overview) ============================= */
+function renderCareOverview(){
+  return `
+    <div class="section-label">— Select a Horse for Care Details —</div>
+    ${STATE.horses.map(h=>`<div class="card row" data-horse="${h.id}" style="cursor:pointer;"><div class="name">${h.name}</div><div class="sub">${horseSubhead(h)}</div></div>`).join('')}
+    <div class="section-label">— All Recent Training Notes —</div>
+    ${STATE.horses.flatMap(h=>(STATE.horseData[h.id].trainingNotes||[]).map(n=>({...n, horse:h.name}))).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,5).map(n=>`
+      <div class="timeline-item"><div class="timeline-date">${fmtDate(n.date)} · ${n.horse}</div><div class="timeline-author">${n.author}${n.source==='direct-response'?' (via request)':''}</div><div class="timeline-content">${n.content}</div></div>
+    `).join('') || '<div class="empty">No training notes logged yet.</div>'}
+  `;
+}
+function attachCareOverviewHandlers(){
+  document.querySelectorAll('[data-horse]').forEach(c=>c.addEventListener('click', ()=>{ ACTIVE_HORSE=c.dataset.horse; renderScreen(); }));
+}
+
+/* ============================= REPORTS TAB ============================= */
+function renderReportsOverview(){
+  const allReports = STATE.horses.flatMap(h=>(STATE.horseData[h.id].aiReports||[]).map(r=>({...r, horseName:h.name, horseId:h.id}))).sort((a,b)=>b.date.localeCompare(a.date));
+  return `
+    <div class="section-label">— New AI Progress Report —</div>
+    <div class="card">
+      <label>Horse</label>
+      <select id="rep-horse">${STATE.horses.map(h=>`<option value="${h.id}">${h.name}</option>`).join('')}</select>
+      <label>Photo</label>
+      <div class="photo-preview" id="rep-photo-preview">Tap to choose photo</div>
+      <input type="file" accept="image/*" id="rep-photo-input" style="display:none;">
+      <label>Qualitative Notes</label>
+      <textarea id="rep-notes" placeholder="Topline, attitude, anything you've noticed..."></textarea>
+      <div class="btn-row"><button class="btn btn-primary" id="rep-generate">Generate AI Report</button></div>
+    </div>
+    <div class="section-label">— Past Reports —</div>
+    ${allReports.length? allReports.map(r=>`
+      <div class="card">
+        <div class="row"><div class="report-title">${r.horseName}</div><div class="report-date">${fmtDate(r.date)}</div></div>
+        <div class="report-body">${r.assessment}</div>
+        <div class="tag-row">
+          ${r.trainerQuestions.length?`<div class="tag" data-mailto data-role="trainer" data-report="${r.id}" data-horse="${r.horseId}">✉ ${r.trainerQuestions.length} for Trainer</div>`:''}
+          ${r.vetQuestions.length?`<div class="tag" data-mailto data-role="vet" data-report="${r.id}" data-horse="${r.horseId}">✉ ${r.vetQuestions.length} for Vet</div>`:''}
+          ${r.farrierQuestions.length?`<div class="tag" data-mailto data-role="farrier" data-report="${r.id}" data-horse="${r.horseId}">✉ ${r.farrierQuestions.length} for Farrier</div>`:''}
+          ${r.bodyworkQuestions.length?`<div class="tag" data-mailto data-role="bodywork" data-report="${r.id}" data-horse="${r.horseId}">✉ ${r.bodyworkQuestions.length} for Bodywork</div>`:''}
+        </div>
+      </div>
+    `).join('') : '<div class="empty">No reports generated yet.</div>'}
+  `;
+}
+function attachReportsOverviewHandlers(){
+  const preview = document.getElementById('rep-photo-preview');
+  const input = document.getElementById('rep-photo-input');
+  let photoData = null;
+  preview.addEventListener('click', ()=>input.click());
+  input.addEventListener('change', async ()=>{
+    if(input.files[0]){ photoData = await compressImage(input.files[0]); preview.style.backgroundImage = `url(${photoData})`; preview.textContent=''; }
+  });
+  document.getElementById('rep-generate').addEventListener('click', async (e)=>{
+    const horseId = document.getElementById('rep-horse').value;
+    const notes = document.getElementById('rep-notes').value.trim();
+    const btn = e.target;
+    btn.innerHTML = '<span class="spinner"></span>Generating...'; btn.disabled = true;
+    try{
+      const result = await generateAIReport(horseId, photoData, notes);
+      const hd = STATE.horseData[horseId];
+      hd.aiReports = hd.aiReports || [];
+      const report = { id:uid(), date: todayStr(), photo: photoData, notes, assessment: result.assessment, trainerQuestions: result.trainerQuestions||[], vetQuestions: result.vetQuestions||[], farrierQuestions: result.farrierQuestions||[], bodyworkQuestions: result.bodyworkQuestions||[] };
+      hd.aiReports.push(report);
+      // feed into training notes journal too
+      hd.trainingNotes = hd.trainingNotes || [];
+      hd.trainingNotes.push({ id:uid(), date: todayStr(), author:'AI Report', content: result.assessment, source:'ai-report' });
+      // feed photo into the visual timeline too, if one was provided
+      if(photoData){
+        hd.photoLog = hd.photoLog || [];
+        hd.photoLog.push({ id:uid(), date: todayStr(), photo: photoData, caption:'AI Progress Report' });
+      }
+      await sSet('horse-data:'+horseId, hd);
+      renderScreen();
+    }catch(err){
+      alert('Report generation failed: '+err.message);
+      btn.textContent='Generate AI Report'; btn.disabled=false;
+    }
+  });
+  document.querySelectorAll('[data-mailto]').forEach(tag=>tag.addEventListener('click', ()=>openQuestionsShare(tag.dataset.horse, tag.dataset.report, tag.dataset.role)));
+}
+function openQuestionsShare(horseId, reportId, role){
+  const hd = STATE.horseData[horseId];
+  const h = STATE.horses.find(x=>x.id===horseId);
+  const report = hd.aiReports.find(r=>r.id===reportId);
+  const qKey = role+'Questions';
+  const questions = report[qKey] || [];
+  const contact = STATE.contacts[role];
+  const body = `Hi${contact&&contact.name?' '+contact.name:''},\n\nFollowing ${h.name}'s latest progress check-in, a few questions:\n\n${questions.map((q,i)=>`${i+1}. ${q}`).join('\n')}\n\nThanks,\nLauren`;
+  const subject = `${h.name} — Progress Check-in Questions`;
+  const mailto = `mailto:${contact&&contact.email?contact.email:''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  showModal(`
+    <h3>Questions for ${ROLE_LABELS[role]}</h3>
+    <div class="card"><div class="report-body">${body.replace(/\n/g,'<br>')}</div></div>
+    <div class="btn-row">
+      <a class="btn btn-primary" style="text-decoration:none; text-align:center;" href="${mailto}">Open in Mail</a>
+    </div>
+    <div class="btn-row"><button class="btn btn-secondary" id="copyQ">Copy to Clipboard</button></div>
+  `);
+  document.getElementById('copyQ').addEventListener('click', ()=>{
+    navigator.clipboard.writeText(body).then(()=>alert('Copied!'));
+  });
+}
+
+/* ============================= REQUEST UPDATE MODAL ============================= */
+function openRequestModal(defaultHorseId, defaultRole){
+  showModal(`
+    <h3>Request Stakeholder Update</h3>
+    <label>Horse</label>
+    <select id="rq-horse">${STATE.horses.map(h=>`<option value="${h.id}" ${h.id===defaultHorseId?'selected':''}>${h.name}</option>`).join('')}</select>
+    <label>Role</label>
+    <select id="rq-role">
+      <option value="trainer" ${defaultRole==='trainer'?'selected':''}>Trainer</option>
+      <option value="vet" ${defaultRole==='vet'?'selected':''}>Vet</option>
+      <option value="farrier" ${defaultRole==='farrier'?'selected':''}>Farrier</option>
+      <option value="bodywork" ${defaultRole==='bodywork'?'selected':''}>Bodywork</option>
+    </select>
+    <div id="rq-preview" class="sub" style="margin-top:10px;"></div>
+    <div class="btn-row"><button class="btn btn-primary" id="rq-create">Generate Request Link</button></div>
+    <div id="rq-result"></div>
+  `);
+  function updatePreview(){
+    const horseId = document.getElementById('rq-horse').value;
+    const role = document.getElementById('rq-role').value;
+    const h = STATE.horses.find(x=>x.id===horseId);
+    const qs = templateQuestions(role, h.name);
+    document.getElementById('rq-preview').innerHTML = qs.map(q=>'• '+q).join('<br>');
+  }
+  document.getElementById('rq-horse').addEventListener('change', updatePreview);
+  document.getElementById('rq-role').addEventListener('change', updatePreview);
+  updatePreview();
+  document.getElementById('rq-create').addEventListener('click', async ()=>{
+    const horseId = document.getElementById('rq-horse').value;
+    const role = document.getElementById('rq-role').value;
+    const h = STATE.horses.find(x=>x.id===horseId);
+    const questions = templateQuestions(role, h.name);
+    const req = { id: uid(), horseId, horseName:h.name, role, questions, status:'pending', response:null, createdAt: todayStr() };
+    STATE.requests.push(req);
+    await sSet('requests', STATE.requests);
+    const link = `${location.origin}${location.pathname}?respond=${req.id}`;
+    const contact = STATE.contacts[role];
+    const body = `Hi${contact&&contact.name?' '+contact.name:''},\n\nCould you give a quick update on ${h.name} using this link? It only takes a minute:\n${link}\n\nThanks,\nLauren`;
+    const mailto = `mailto:${contact&&contact.email?contact.email:''}?subject=${encodeURIComponent(h.name+' — Update Request')}&body=${encodeURIComponent(body)}`;
+    document.getElementById('rq-result').innerHTML = `
+      <div class="link-box">${link}</div>
+      <div class="btn-row"><a class="btn btn-primary" style="text-decoration:none; text-align:center;" href="${mailto}">Open in Mail</a></div>
+      <div class="btn-row"><button class="btn btn-secondary" id="rq-copy">Copy Link + Message</button></div>
+    `;
+    document.getElementById('rq-copy').addEventListener('click', ()=>navigator.clipboard.writeText(body).then(()=>alert('Copied!')));
+  });
+}
+
+/* ============================= DIRECT RESPONSE SCREEN ============================= */
+function renderRespondScreen(){
+  const req = STATE.requests.find(r=>r.id===RESPOND_MODE.requestId);
+  if(!req) return `<div style="padding:40px 20px; font-family:Archivo,sans-serif;">Request not found or no longer valid.</div>`;
+  if(req.status==='completed') return `<div style="padding:40px 20px; font-family:Archivo,sans-serif; text-align:center;">
+    <div class="brand" style="color:#1F2E23;">Already submitted — thank you!</div>
+  </div>`;
+  return `
+    <div class="topbar"><div class="brand">STA<span>BLE</span></div><div class="sub">${ROLE_LABELS[req.role].toUpperCase()} UPDATE</div></div>
+    <div class="screen">
+      <div class="section-label">— ${req.horseName} —</div>
+      <div class="card">
+        ${req.questions.map((q,i)=>`<label>${i+1}. ${q}</label><textarea class="respond-answer" data-idx="${i}"></textarea>`).join('')}
+        <div class="btn-row"><button class="btn btn-primary" id="respond-submit">Submit Update</button></div>
+      </div>
+    </div>
+  `;
+}
+function attachRespondHandlers(){
+  const btn = document.getElementById('respond-submit');
+  if(!btn) return;
+  btn.addEventListener('click', async ()=>{
+    const req = STATE.requests.find(r=>r.id===RESPOND_MODE.requestId);
+    const answers = Array.from(document.querySelectorAll('.respond-answer')).map((ta,i)=>`${req.questions[i]}\n${ta.value.trim()||'(no answer)'}`).join('\n\n');
+    req.status = 'completed'; req.response = answers; req.respondedAt = todayStr();
+    await sSet('requests', STATE.requests);
+    const hd = STATE.horseData[req.horseId] || emptyHorseData();
+    hd.trainingNotes = hd.trainingNotes || [];
+    hd.trainingNotes.push({ id:uid(), date: todayStr(), author: ROLE_LABELS[req.role], content: answers, source:'direct-response' });
+    await sSet('horse-data:'+req.horseId, hd);
+    document.getElementById('app').innerHTML = `<div style="padding:60px 20px; text-align:center; font-family:'Roboto Slab',serif; color:#1F2E23; font-size:20px;">Thank you! Your update has been recorded.</div>`;
+  });
+}
+
+/* ============================= SETTINGS TAB ============================= */
+function renderSettings(){
+  const c = STATE.contacts;
+  function contactCard(role){
+    const info = c[role];
+    return `<div class="card">
+      <div class="name">${ROLE_LABELS[role]}</div>
+      <div class="sub">${info? `${info.name||''} ${info.email?'· '+info.email:''} ${info.phone?'· '+info.phone:''}` : 'Not set'}</div>
+      <div class="btn-row"><button class="btn-sm" data-editrole="${role}">Edit</button></div>
+    </div>`;
+  }
+  return `
+    <div class="section-label">— Contacts —</div>
+    ${contactCard('trainer')}${contactCard('vet')}${contactCard('farrier')}${contactCard('bodywork')}
+    ${(c.custom||[]).map((cu,i)=>`<div class="card"><div class="name">${cu.role}</div><div class="sub">${cu.name||''} ${cu.email?'· '+cu.email:''}</div></div>`).join('')}
+    <button class="btn btn-secondary" id="addCustomContact">+ Add Custom Contact</button>
+
+    ${!SYNC_OK ? `<div class="banner" style="background:#8C2F2F;">Some changes may not have saved. <span id="retrySyncBtn" style="text-decoration:underline; cursor:pointer;">Tap to retry</span></div>` : ''}
+    <div class="section-label">— Barn Export —</div>
+    <div class="card">
+      <div class="sub">Generates a simplified, shareable snapshot of today's bag prep and inventory levels for barn staff — no vet notes or AI reports included.</div>
+      <div class="btn-row"><button class="btn btn-primary" id="genExport">Generate Barn Export</button></div>
+    </div>
+    <div id="exportResult"></div>
+  `;
+}
+function attachSettingsHandlers(){
+  document.querySelectorAll('[data-editrole]').forEach(b=>b.addEventListener('click', ()=>openEditContact(b.dataset.editrole)));
+  document.getElementById('addCustomContact').addEventListener('click', openAddCustomContact);
+  document.getElementById('genExport').addEventListener('click', generateBarnExport);
+  const retryBtn = document.getElementById('retrySyncBtn');
+  if(retryBtn) retryBtn.addEventListener('click', async ()=>{
+    retryBtn.textContent = 'Retrying...';
+    await sSet('horses-roster', STATE.horses);
+    await sSet('inventory', STATE.inventory);
+    await sSet('contacts', STATE.contacts);
+    await sSet('requests', STATE.requests);
+    for(const h of STATE.horses) await sSet('horse-data:'+h.id, STATE.horseData[h.id]);
+    renderScreen();
+  });
+}
+function openEditContact(role){
+  const info = STATE.contacts[role] || {};
+  showModal(`
+    <h3>Edit ${ROLE_LABELS[role]}</h3>
+    <label>Name</label><input type="text" id="c-name" value="${info.name||''}">
+    <label>Email</label><input type="email" id="c-email" value="${info.email||''}">
+    <label>Phone</label><input type="tel" id="c-phone" value="${info.phone||''}">
+    <div class="btn-row"><button class="btn btn-primary" id="c-save">Save Contact</button></div>
+  `);
+  document.getElementById('c-save').addEventListener('click', async ()=>{
+    STATE.contacts[role] = { name:document.getElementById('c-name').value.trim(), email:document.getElementById('c-email').value.trim(), phone:document.getElementById('c-phone').value.trim() };
+    await sSet('contacts', STATE.contacts);
+    closeModal(); renderScreen();
+  });
+}
+function openAddCustomContact(){
+  showModal(`
+    <h3>Add Custom Contact</h3>
+    <label>Role / Title</label><input type="text" id="cc-role">
+    <label>Name</label><input type="text" id="cc-name">
+    <label>Email</label><input type="email" id="cc-email">
+    <div class="btn-row"><button class="btn btn-primary" id="cc-save">Save</button></div>
+  `);
+  document.getElementById('cc-save').addEventListener('click', async ()=>{
+    STATE.contacts.custom = STATE.contacts.custom || [];
+    STATE.contacts.custom.push({ role:document.getElementById('cc-role').value.trim(), name:document.getElementById('cc-name').value.trim(), email:document.getElementById('cc-email').value.trim() });
+    await sSet('contacts', STATE.contacts);
+    closeModal(); renderScreen();
+  });
+}
+function generateBarnExport(){
+  const today = todayStr();
+  let text = `STABLE — Barn Export (${fmtDate(today)})\n\n`;
+  STATE.horses.forEach(h=>{
+    const hd = STATE.horseData[h.id];
+    const skipped = (hd.skipDates||[]).includes(today);
+    text += `${h.name}${skipped?' (SKIP TODAY)':''} — Bags at barn: ${hd.preparedBags.daysRemaining} days left${hd.preparedBags.daysRemaining<2?' ⚠ NEEDS RESTOCK':''}\n`;
+    text += `  AM: ${(hd.feedingPlan.AM||[]).map(i=>`${i.name} ${i.amt}${i.unit}`).join(', ')||'—'}\n`;
+    text += `  PM: ${(hd.feedingPlan.PM||[]).map(i=>`${i.name} ${i.amt}${i.unit}`).join(', ')||'—'}\n\n`;
+  });
+  text += `Raw Backstock Levels:\n`;
+  STATE.inventory.items.forEach(it=>{ text += `  ${it.name}: ${it.qtyOnHand} ${it.unit} on hand\n`; });
+  document.getElementById('exportResult').innerHTML = `
+    <div class="card"><div class="report-body">${text.replace(/\n/g,'<br>')}</div>
+    <div class="btn-row"><button class="btn btn-secondary" id="copyExport">Copy</button></div></div>
+  `;
+  document.getElementById('copyExport').addEventListener('click', ()=>navigator.clipboard.writeText(text).then(()=>alert('Copied!')));
+}
+
+/* ============================= MODAL HELPERS ============================= */
+function showModal(html){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modalOverlay';
+  overlay.innerHTML = `<div class="modal"><div class="modal-head"><button class="close" id="modalClose">✕</button></div>${html}</div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('modalClose').addEventListener('click', closeModal);
+  overlay.addEventListener('click', e=>{ if(e.target===overlay) closeModal(); });
+}
+function closeModal(){ const o = document.getElementById('modalOverlay'); if(o) o.remove(); }
+
+/* ============================= BOOT ============================= */
+(async function boot(){
+  const params = new URLSearchParams(location.search);
+  const respondId = params.get('respond');
+  document.getElementById('app').innerHTML = `<div style="padding:60px 20px; text-align:center; color:#F6F3EA; font-family:'JetBrains Mono',monospace;">Loading Stable...</div>`;
+  await loadAll();
+  if(respondId){ RESPOND_MODE = {requestId: respondId}; }
+  render();
+})();
+</script>
+</body>
+</html>
