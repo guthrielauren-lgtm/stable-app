@@ -274,7 +274,7 @@ function seedInventory(){
   };
 }
 function emptyHorseData(){
-  return { feedingPlan:{AM:[], PM:[]}, medsPlan:[], skipDates:[], bcsLog:[], vetRecords:[], trainingNotes:[], aiReports:[], preparedBags:{daysRemaining:0, lastPrepDate:null}, photoLog:[], transitions:[], dailyCheckins:[], forage:emptyForage() };
+  return { feedingPlan:{AM:[], PM:[]}, medsPlan:[], skipDates:[], bcsLog:[], vetRecords:[], trainingNotes:[], aiReports:[], preparedBags:{am:0, pm:0, lastPrepDate:null, lastAmDebitDate:null, lastPmDebitDate:null}, photoLog:[], transitions:[], dailyCheckins:[], forage:emptyForage() };
 }
 function emptyForage(){
   return {
@@ -289,60 +289,60 @@ async function runMigrations(){
   let applied = await sGet('migrations');
   if(!applied) applied = [];
   const MIG_ID = 'willow-real-diet-and-profiles-2026-07-13';
-  if(applied.includes(MIG_ID)) return;
+  if(!applied.includes(MIG_ID)){
+    const quill = STATE.horses.find(h=>h.id==='quill');
+    const willow = STATE.horses.find(h=>h.id==='willow');
+    let rosterChanged = false;
 
-  const quill = STATE.horses.find(h=>h.id==='quill');
-  const willow = STATE.horses.find(h=>h.id==='willow');
-  let rosterChanged = false;
+    if(quill){
+      quill.birthDate = '2020-06-03';
+      quill.registeredName = quill.registeredName || 'Quilliam RSF';
+      quill.breeder = quill.breeder || 'Rio Star Farms';
+      quill.markings = quill.markings || 'Snip, rear socks, front pastern marks';
+      rosterChanged = true;
+    }
+    if(willow){
+      willow.birthDate = '2024-06-14';
+      willow.registeredName = willow.registeredName || 'Willow Rose RSF';
+      willow.breeder = willow.breeder || 'Rio Star Farm';
+      willow.markings = willow.markings || 'None';
+      rosterChanged = true;
+    }
+    if(rosterChanged) await sSet('horses-roster', STATE.horses);
 
-  if(quill){
-    quill.birthDate = '2020-06-03';
-    quill.registeredName = quill.registeredName || 'Quilliam RSF';
-    quill.breeder = quill.breeder || 'Rio Star Farms';
-    quill.markings = quill.markings || 'Snip, rear socks, front pastern marks';
-    rosterChanged = true;
+    // Willow is actually still on Bryant Grain 14% Equine Energy Plus at ~8 lb/day (4 AM + 4 PM),
+    // not yet on Empower Topline Balance. Correct her live feeding plan and set up the real transition,
+    // starting Monday (the day after she arrives at the new barn).
+    const willowHd = STATE.horseData['willow'];
+    if(willowHd){
+      willowHd.feedingPlan = {
+        AM: [ {name:'14% Concentrate (transition)', amt:4, unit:'lb'}, {name:"Farrier's Formula Extra Strength", amt:1, unit:'scoop'} ],
+        PM: [ {name:'14% Concentrate (transition)', amt:4, unit:'lb'} ]
+      };
+      const startDate = '2026-07-13'; // Monday
+      willowHd.transitions = willowHd.transitions || [];
+      willowHd.transitions.push({
+        id: uid(), itemName:'Empower Topline Balance', targetAmt:2, unit:'lb', timing:'Both', weeks:3,
+        startDate, startAmt:0, replaces:'14% Concentrate (transition)', replacesAmt:8, status:'active'
+      });
+      willowHd.transitions.push({
+        id: uid(), itemName:'Elevate Vitamin E', targetAmt:1, unit:'scoop', timing:'AM', weeks:3,
+        startDate, startAmt:0, replaces:null, replacesAmt:0, status:'active'
+      });
+      willowHd.transitions.forEach(t=>{ if(t.startDate===startDate) applyTransitionToFeedingPlan(willowHd, t); });
+      await sSet('horse-data:willow', willowHd);
+      STATE.horseData['willow'] = willowHd;
+    }
+
+    // Make sure Bryant Grain is tracked in backstock so the transition's ramp-down debits correctly
+    if(!STATE.inventory.items.find(i=>i.name==='Bryant Grain 14% Equine Energy Plus')){
+      STATE.inventory.items.push({id:uid(), name:'Bryant Grain 14% Equine Energy Plus', unit:'lb', qtyOnHand:40, reorderDays:5});
+      await sSet('inventory', STATE.inventory);
+    }
+
+    applied.push(MIG_ID);
+    await sSet('migrations', applied);
   }
-  if(willow){
-    willow.birthDate = '2024-06-14';
-    willow.registeredName = willow.registeredName || 'Willow Rose RSF';
-    willow.breeder = willow.breeder || 'Rio Star Farm';
-    willow.markings = willow.markings || 'None';
-    rosterChanged = true;
-  }
-  if(rosterChanged) await sSet('horses-roster', STATE.horses);
-
-  // Willow is actually still on Bryant Grain 14% Equine Energy Plus at ~8 lb/day (4 AM + 4 PM),
-  // not yet on Empower Topline Balance. Correct her live feeding plan and set up the real transition,
-  // starting Monday (the day after she arrives at the new barn).
-  const willowHd = STATE.horseData['willow'];
-  if(willowHd){
-    willowHd.feedingPlan = {
-      AM: [ {name:'14% Concentrate (transition)', amt:4, unit:'lb'}, {name:"Farrier's Formula Extra Strength", amt:1, unit:'scoop'} ],
-      PM: [ {name:'14% Concentrate (transition)', amt:4, unit:'lb'} ]
-    };
-    const startDate = '2026-07-13'; // Monday
-    willowHd.transitions = willowHd.transitions || [];
-    willowHd.transitions.push({
-      id: uid(), itemName:'Empower Topline Balance', targetAmt:2, unit:'lb', timing:'Both', weeks:3,
-      startDate, startAmt:0, replaces:'14% Concentrate (transition)', replacesAmt:8, status:'active'
-    });
-    willowHd.transitions.push({
-      id: uid(), itemName:'Elevate Vitamin E', targetAmt:1, unit:'scoop', timing:'AM', weeks:3,
-      startDate, startAmt:0, replaces:null, replacesAmt:0, status:'active'
-    });
-    willowHd.transitions.forEach(t=>{ if(t.startDate===startDate) applyTransitionToFeedingPlan(willowHd, t); });
-    await sSet('horse-data:willow', willowHd);
-    STATE.horseData['willow'] = willowHd;
-  }
-
-  // Make sure Bryant Grain is tracked in backstock so the transition's ramp-down debits correctly
-  if(!STATE.inventory.items.find(i=>i.name==='Bryant Grain 14% Equine Energy Plus')){
-    STATE.inventory.items.push({id:uid(), name:'Bryant Grain 14% Equine Energy Plus', unit:'lb', qtyOnHand:40, reorderDays:5});
-    await sSet('inventory', STATE.inventory);
-  }
-
-  applied.push(MIG_ID);
-  await sSet('migrations', applied);
 
   // Second pass: generalize any already-saved 'Bryant Grain' references to a brand-neutral
   // '14% Concentrate (transition)' label, so switching supply sources mid-transition doesn't
@@ -594,6 +594,48 @@ async function runMigrations(){
     applied.push(MIG_ID_11);
     await sSet('migrations', applied);
   }
+
+  // Twelfth pass: split the single "daysRemaining" prepared-bags counter into independent
+  // AM and PM bag counts, since real-world counts drift out of sync (barn staff inconsistency,
+  // one meal running low before the other). Also ensures lastDebitDate exists going forward.
+  const MIG_ID_12 = 'prepared-bags-am-pm-split-2026-07';
+  if(!applied.includes(MIG_ID_12)){
+    for(const h of STATE.horses){
+      const hd = STATE.horseData[h.id];
+      if(!hd) continue;
+      if(hd.preparedBags && hd.preparedBags.am===undefined){
+        const oldDays = hd.preparedBags.daysRemaining || 0;
+        hd.preparedBags = {
+          am: oldDays, pm: oldDays,
+          lastPrepDate: hd.preparedBags.lastPrepDate || null,
+          lastDebitDate: hd.preparedBags.lastDebitDate || null
+        };
+        await sSet('horse-data:'+h.id, hd);
+      }
+    }
+    applied.push(MIG_ID_12);
+    await sSet('migrations', applied);
+  }
+
+  // Thirteenth pass: split the single lastDebitDate into independent AM/PM debit-tracking dates,
+  // so each meal's debit can respect its own time-of-day cutoff (8am for AM, 6pm for PM) instead
+  // of both meals debiting together once a calendar day has passed.
+  const MIG_ID_13 = 'prepared-bags-am-pm-debit-times-2026-07';
+  if(!applied.includes(MIG_ID_13)){
+    for(const h of STATE.horses){
+      const hd = STATE.horseData[h.id];
+      if(!hd || !hd.preparedBags) continue;
+      if(hd.preparedBags.lastAmDebitDate===undefined){
+        const oldDate = hd.preparedBags.lastDebitDate || null;
+        hd.preparedBags.lastAmDebitDate = oldDate;
+        hd.preparedBags.lastPmDebitDate = oldDate;
+        delete hd.preparedBags.lastDebitDate;
+        await sSet('horse-data:'+h.id, hd);
+      }
+    }
+    applied.push(MIG_ID_13);
+    await sSet('migrations', applied);
+  }
 }
 
 async function loadAll(){
@@ -648,7 +690,7 @@ async function loadAll(){
           ] };
         hd.medsPlan = [];
         hd.bcsLog = [{date: todayStr(), score:5.5, weight:1500, notes:'Baseline'}];
-        hd.preparedBags = {daysRemaining:3, lastPrepDate: todayStr()};
+        hd.preparedBags = {am:3, pm:3, lastPrepDate: todayStr(), lastAmDebitDate: todayStr(), lastPmDebitDate: todayStr()};
         hd.forage = { hayEntries:[{ id:uid(), type:'Grass hay', cutting:'', qty:null, unit:'lb', source:'' }], notes:'', measuredItems:[
             {name:'Beet Pulp Shreds', amt:0.8, unit:'lb'},
             {name:'Alfalfa Pellets', amt:1.3, unit:'lb'}
@@ -663,7 +705,7 @@ async function loadAll(){
             {name:'Empower Topline Balance', amt:1, unit:'lb'}
           ] };
         hd.bcsLog = [{date: todayStr(), score:5.0, weight:1000, notes:'Baseline, growing 2yo'}];
-        hd.preparedBags = {daysRemaining:5, lastPrepDate: todayStr()};
+        hd.preparedBags = {am:5, pm:5, lastPrepDate: todayStr(), lastAmDebitDate: todayStr(), lastPmDebitDate: todayStr()};
       }
       await sSet('horse-data:'+h.id, hd);
     }
@@ -760,37 +802,77 @@ async function factoryReset(){
 }
 
 /* ============================= AUTO-DEBIT ============================= */
+function bagsDaysLeft(pb){
+  if(!pb) return 0;
+  return Math.min(pb.am||0, pb.pm||0);
+}
+const AM_DEBIT_HOUR = 8;  // 8:00 AM
+const PM_DEBIT_HOUR = 18; // 6:00 PM
 async function runAutoDebit(){
-  // Prepared bags (barn-side, ready to feed) debit by 1 day per elapsed day.
-  // Raw backstock is untouched here - it only moves when Lauren explicitly preps a new batch.
+  // Prepared bags (barn-side, ready to feed) debit by 1 bag per meal per elapsed day, tracked
+  // independently for AM and PM since real-world counts can drift out of sync (barn staff
+  // inconsistency, one meal running low before the other). This is a static app with no
+  // background process, so "debits at 8am/6pm" means: whenever the app is opened, check
+  // whether each cutoff time has already passed today and debit accordingly - it can't run
+  // unattended at exactly that clock time. Raw backstock is untouched here - it only moves
+  // when Lauren explicitly preps a new batch.
   const today = todayStr();
+  const now = new Date();
+  const currentHour = now.getHours() + now.getMinutes()/60;
   let horseChanged = [];
   for(const h of STATE.horses){
     const hd = STATE.horseData[h.id];
     if(!hd) continue;
-    hd.preparedBags = hd.preparedBags || {daysRemaining:0, lastPrepDate:null};
-    const last = hd.preparedBags.lastDebitDate || today;
-    const gap = daysBetween(last, today);
-    if(gap <= 0) continue;
-    let debitDays = 0;
-    for(let i=1;i<=gap;i++){
-      const d = new Date(last); d.setDate(d.getDate()+i);
-      const dStr = d.toISOString().slice(0,10);
-      if(!(hd.skipDates||[]).includes(dStr)) debitDays++;
+    hd.preparedBags = hd.preparedBags || {am:0, pm:0, lastPrepDate:null, lastAmDebitDate:null, lastPmDebitDate:null};
+    let changed = false;
+
+    function debitMeal(mealKey, lastDateKey, cutoffHour){
+      const last = hd.preparedBags[lastDateKey];
+      if(!last){
+        // Never initialized - establish today as the baseline, no retroactive debit.
+        hd.preparedBags[lastDateKey] = today;
+        changed = true;
+        return;
+      }
+      if(last === today) return; // already fully handled for today
+      const gap = daysBetween(last, today);
+      if(gap <= 0) return;
+      // Days strictly between last and today are fully in the past - their cutoff has definitely passed.
+      let debitCount = 0;
+      for(let i=1;i<gap;i++){
+        const d = new Date(last); d.setDate(d.getDate()+i);
+        const dStr = d.toISOString().slice(0,10);
+        if(!(hd.skipDates||[]).includes(dStr)) debitCount++;
+      }
+      // Today only debits once we're actually past its cutoff hour.
+      const todayIsSkip = (hd.skipDates||[]).includes(today);
+      if(currentHour >= cutoffHour){
+        if(!todayIsSkip) debitCount++;
+        hd.preparedBags[lastDateKey] = today; // today's meal fully resolved
+      } else {
+        // Not past today's cutoff yet - mark everything through yesterday as resolved,
+        // leave today pending so it's picked up next time the app opens after the cutoff.
+        const y = new Date(today); y.setDate(y.getDate()-1);
+        hd.preparedBags[lastDateKey] = y.toISOString().slice(0,10);
+      }
+      if(debitCount>0) hd.preparedBags[mealKey] = Math.max(0, +(hd.preparedBags[mealKey] - debitCount).toFixed(2));
+      changed = true;
     }
-    hd.preparedBags.daysRemaining = Math.max(0, +(hd.preparedBags.daysRemaining - debitDays).toFixed(2));
-    hd.preparedBags.lastDebitDate = today;
-    horseChanged.push(h.id);
+
+    debitMeal('am','lastAmDebitDate', AM_DEBIT_HOUR);
+    debitMeal('pm','lastPmDebitDate', PM_DEBIT_HOUR);
+    if(changed) horseChanged.push(h.id);
   }
   for(const id of horseChanged) await sSet('horse-data:'+id, STATE.horseData[id]);
 }
 
-/* Prep a batch of days' worth of bags for a horse: consumes raw backstock, adds to that horse's prepared-bag count */
-async function prepBags(horseId, days){
+/* Prep AM/PM bags for a horse independently: consumes raw backstock per meal's actual plan,
+   adds to that horse's own AM/PM prepared-bag counts. */
+async function prepBags(horseId, amBags, pmBags){
   const hd = STATE.horseData[horseId];
-  const items = [...(hd.feedingPlan.AM||[]), ...(hd.feedingPlan.PM||[])];
   const needed = {};
-  items.forEach(it=>{ needed[it.name] = (needed[it.name]||0) + it.amt*days; });
+  (hd.feedingPlan.AM||[]).forEach(it=>{ needed[it.name] = (needed[it.name]||0) + it.amt*amBags; });
+  (hd.feedingPlan.PM||[]).forEach(it=>{ needed[it.name] = (needed[it.name]||0) + it.amt*pmBags; });
   const shortfalls = [];
   Object.keys(needed).forEach(name=>{
     const invItem = STATE.inventory.items.find(x=>x.name.toLowerCase()===name.toLowerCase());
@@ -803,7 +885,8 @@ async function prepBags(horseId, days){
     const invItem = STATE.inventory.items.find(x=>x.name.toLowerCase()===name.toLowerCase());
     invItem.qtyOnHand = +(invItem.qtyOnHand - needed[name]).toFixed(2);
   });
-  hd.preparedBags.daysRemaining = +(hd.preparedBags.daysRemaining + days).toFixed(2);
+  hd.preparedBags.am = +(hd.preparedBags.am + amBags).toFixed(2);
+  hd.preparedBags.pm = +(hd.preparedBags.pm + pmBags).toFixed(2);
   hd.preparedBags.lastPrepDate = todayStr();
   await sSet('inventory', STATE.inventory);
   await sSet('horse-data:'+horseId, hd);
@@ -821,6 +904,23 @@ function dailyUsage(itemName){
 }
 
 /* ============================= PHOTO COMPRESSION ============================= */
+function recompressDataUrl(dataUrl, maxDim=220, quality=0.5){
+  // Shrinks an already-loaded data URL down to a small thumbnail for long-term storage.
+  return new Promise((resolve,reject)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      let w=img.width, h=img.height;
+      if(w>h && w>maxDim){ h=Math.round(h*maxDim/w); w=maxDim; }
+      else if(h>=w && h>maxDim){ w=Math.round(w*maxDim/h); h=maxDim; }
+      const canvas = document.createElement('canvas');
+      canvas.width=w; canvas.height=h;
+      canvas.getContext('2d').drawImage(img,0,0,w,h);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
 function compressImage(file, maxDim=800, quality=0.72){
   return new Promise((resolve,reject)=>{
     const reader = new FileReader();
@@ -852,37 +952,46 @@ function seasonFromDate(dateStr){
   if(month>=6 && month<=8) return 'Summer';
   return 'Fall';
 }
-async function generateAIReport(horseId, photoDataUrl, qualNotes){
+async function generateAIReport(horseId, photoDataUrls, qualNotes){
   const h = STATE.horses.find(x=>x.id===horseId);
   const hd = STATE.horseData[horseId];
   const recentNotes = (hd.trainingNotes||[]).slice(-5).map(n=>`- [${n.date}] ${n.author}: ${n.content}`).join('\n') || 'None';
   const recentBcs = (hd.bcsLog||[]).slice(-3).map(b=>`- [${b.date}] BCS ${b.score}/9, ${b.weight}lb, ${b.notes||''}`).join('\n') || 'None';
+  const feedingSummary = [...(hd.feedingPlan.AM||[]), ...(hd.feedingPlan.PM||[])].map(i=>`${i.name}: ${i.amt} ${i.unit}/day`).join(', ') || 'None on file';
   const today = todayStr();
   const season = seasonFromDate(today);
+  const priorReports = (hd.aiReports||[]).slice().sort((a,b)=>(b.createdAt||b.date).localeCompare(a.createdAt||a.date));
+  const lastReport = priorReports[0];
 
-  const sys = `You are an experienced equine bodywork and conditioning assessor helping a horse owner track a horse's progress over time. You will be shown a photo and given context, including today's date and season. Respond ONLY with valid JSON, no markdown fences, no preamble, in this exact shape:
+  const sys = `You are an experienced equine bodywork and conditioning assessor helping a horse owner track a horse's progress over time. You will be shown one or more photos (if multiple, they may be different angles of the same check-in) and given context, including today's date, season, current feeding plan, and (if available) the assessment from the horse's last report. Respond ONLY with valid JSON, no markdown fences, no preamble, in this exact shape:
 {"assessment":"2-4 sentence plain-language visual + qualitative assessment, noting posture, topline, muscling, weight, and anything relevant to soundness or condition. Be specific but appropriately cautious - you are not a substitute for a vet exam.",
+"changeSinceLast":"1-3 sentences on what's genuinely different from the last report, or null if there is no prior report to compare against. Do not force a comparison if nothing meaningful changed - 'largely unchanged since last check-in' is a fine, honest answer.",
+"nutritionNote":"1-2 sentences specifically weighing the horse's visual condition (weight, topline, ribs, overall fill) against what's actually in the current feeding plan below — flag it if intake looks mismatched with appearance in either direction (under- or over-conditioned relative to what's being fed), or null if intake and appearance look reasonably matched. Do not force a concern that isn't there.",
 "trainerQuestions":["q1","q2"],
 "vetQuestions":["q1"],
 "farrierQuestions":["q1"],
 "bodyworkQuestions":["q1"]}
 Factor the season into your assessment and questions where genuinely relevant — for example: coat/hair coat changes and shedding cycles, seasonal weight or topline fluctuation (spring grass, summer workload, fall/winter calorie needs), hydration and heat stress risk in hot months, blanketing/footing/turnout considerations in cold months, and spring pasture-related laminitis/founder risk for at-risk horses. Only raise a seasonal point if it's actually warranted by what you see or read — do not force a seasonal comment into every report.
-Keep each question array to 1-3 sharp, specific questions only if genuinely warranted by what you see/read - do not pad with generic filler.`;
+Keep each question array to 1-3 sharp, specific questions only if genuinely warranted by what you see/read - do not pad with generic filler.
+Tone for trainerQuestions specifically: trainers can be defensive about feedback on a horse in their care, and may downplay or dismiss a concern if it's phrased as a vague worry or a challenge to their judgment. Phrase trainer-facing questions diplomatically — curious and collaborative, not accusatory or presumptuous — but don't hedge away real substance. Where it's genuinely warranted, ground the question in the actual observable evidence (what you see in the photo, a specific change over time, an established equine-care principle) so it reads as informed rather than as an owner's vague unease. The goal is a question a good trainer would respect and actually engage with, not one that's easy to brush off.`;
 
   const userText = `Horse: ${h.name} (${horseSubhead(h)})
 Today's date: ${today} (${season}, Colorado/Denver area)
 Vet context: allergies: ${h.vetContext.allergies||'none'}; conditions: ${h.vetContext.conditions||'none'}
+Current feeding plan (supplements/concentrates): ${feedingSummary}
 Owner's qualitative notes for this check-in: ${qualNotes||'(none provided)'}
 Recent training notes:
 ${recentNotes}
 Recent BCS/weight log:
-${recentBcs}`;
+${recentBcs}
+${lastReport ? `Last report (${fmtDate(lastReport.date)}): ${lastReport.assessment}` : 'No prior report on file for this horse — this is the first one.'}`;
 
   const content = [{type:'text', text:userText}];
-  if(photoDataUrl){
+  (photoDataUrls||[]).forEach(photoDataUrl=>{
+    if(!photoDataUrl) return;
     const match = photoDataUrl.match(/^data:(image\/\w+);base64,(.*)$/);
     if(match) content.unshift({type:'image', source:{type:'base64', media_type:match[1], data:match[2]}});
-  }
+  });
 
   const data = await callClaude({
     model:'claude-sonnet-4-6', max_tokens:1000, system: sys,
@@ -891,7 +1000,7 @@ ${recentBcs}`;
   const textBlocks = (data.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('\n');
   let parsed;
   try{ parsed = JSON.parse(textBlocks.replace(/```json|```/g,'').trim()); }
-  catch(e){ parsed = {assessment: textBlocks || 'Could not parse AI response.', trainerQuestions:[], vetQuestions:[], farrierQuestions:[], bodyworkQuestions:[]}; }
+  catch(e){ parsed = {assessment: textBlocks || 'Could not parse AI response.', changeSinceLast:null, nutritionNote:null, trainerQuestions:[], vetQuestions:[], farrierQuestions:[], bodyworkQuestions:[]}; }
   return parsed;
 }
 
@@ -1577,7 +1686,7 @@ function renderHorses(){
           <div class="stall-name">${h.name}</div>
           <div class="stall-sub">${horseSubhead(h)}</div>
           <div class="nameplate-row">
-            <div class="nameplate-item"><div class="nameplate-label">Bags Left</div><div class="nameplate-val"><span class="bags-chip ${hd.preparedBags.daysRemaining<3?'critical':'ok'}">${hd.preparedBags.daysRemaining}d</span></div></div>
+            <div class="nameplate-item"><div class="nameplate-label">Bags Left</div><div class="nameplate-val"><span class="bags-chip ${bagsDaysLeft(hd.preparedBags)<3?'critical':'ok'}">${bagsDaysLeft(hd.preparedBags)}d</span></div></div>
             <div class="nameplate-item"><div class="nameplate-label">BCS</div><div class="nameplate-val">${lastBcs?lastBcs.score+'/9':'—'}</div></div>
             <div class="nameplate-item"><div class="nameplate-label">Next Report</div><div class="nameplate-val ${nextReport==='Due now'?'alert':''}">${nextReport}</div></div>
           </div>
@@ -1588,7 +1697,7 @@ function renderHorses(){
 
   const lowBags = STATE.horses.filter(h=>{
     const hd = STATE.horseData[h.id];
-    return hd.preparedBags && hd.preparedBags.daysRemaining < 3;
+    return hd.preparedBags && bagsDaysLeft(hd.preparedBags) < 3;
   });
   const lowBackstock = STATE.inventory.items.filter(it=>{
     const use = dailyUsage(it.name);
@@ -1598,14 +1707,14 @@ function renderHorses(){
 
   const criticalHorses = STATE.horses.filter(h=>{
     const hd = STATE.horseData[h.id] || emptyHorseData();
-    return hd.preparedBags && hd.preparedBags.daysRemaining < 3;
+    return hd.preparedBags && bagsDaysLeft(hd.preparedBags) < 3;
   });
 
   return `
     ${criticalHorses.length ? `
     <div class="loud-alert">
       <div class="loud-alert-icon">⚠️</div>
-      <div class="loud-alert-text">${criticalHorses.map(h=>`${h.name}: ${STATE.horseData[h.id].preparedBags.daysRemaining}d left`).join(' · ')}
+      <div class="loud-alert-text">${criticalHorses.map(h=>`${h.name}: ${bagsDaysLeft(STATE.horseData[h.id].preparedBags)}d left`).join(' · ')}
         <div class="loud-alert-sub">Prepared bags running out — prep more soon or bring bags to the barn.</div>
       </div>
     </div>` : ''}
@@ -1621,7 +1730,7 @@ function renderHorses(){
     </div>
     ${lowBags.length? `
     <div class="section-label">— ⚠ Prepared Bags Running Low —</div>
-    ${lowBags.map(h=>`<div class="card row"><div><div class="name">${h.name}</div><div class="sub">Ready-to-feed bags at the barn</div></div><div class="pill low">${STATE.horseData[h.id].preparedBags.daysRemaining} DAYS LEFT</div></div>`).join('')}
+    ${lowBags.map(h=>`<div class="card row"><div><div class="name">${h.name}</div><div class="sub">Ready-to-feed bags at the barn</div></div><div class="pill low">${bagsDaysLeft(STATE.horseData[h.id].preparedBags)} DAYS LEFT</div></div>`).join('')}
     ` : ''}
     ${lowBackstock.length? `
     <div class="section-label">— Raw Backstock Running Low —</div>
@@ -1855,7 +1964,7 @@ function attachHorseProfileHandlers(id){
 function renderHorseFeed(id){
   const h = STATE.horses.find(x=>x.id===id);
   const hd = STATE.horseData[id];
-  const days = hd.preparedBags.daysRemaining;
+  const days = bagsDaysLeft(hd.preparedBags);
   const pantryRows = STATE.inventory.items.map(it=>{
     const use = dailyUsage(it.name);
     const daysLeft = use>0 ? Math.floor(it.qtyOnHand/use) : null;
@@ -1873,6 +1982,8 @@ function renderHorseFeed(id){
     <div class="card">
       <div class="row"><div><div class="name">Days Left</div><div class="sub" style="color:${days<2?'#8C2F2F':'#3D5A42'}; font-weight:600;">${days} days</div></div>
       <div class="btn-row"><button class="btn-sm" id="prepMoreBtn">Prep More</button><button class="btn-sm" id="resetBagsBtn">Set Exact Count</button></div></div>
+      <div class="sub" style="margin-top:8px;">AM: ${hd.preparedBags.am} bags · PM: ${hd.preparedBags.pm} bags</div>
+      <div class="sub" style="margin-top:4px; font-size:10.5px; opacity:.75;">AM debits once you open the app after 8:00am; PM after 6:00pm. There's no background timer — it checks the time whenever you open Stable, not while it's closed.</div>
     </div>
 
     <div class="section-label">— Forage — <span class="add-link" id="editForage">Edit</span></div>
@@ -1928,13 +2039,16 @@ function attachHorseFeedHandlers(id){
 function openResetBagsModal(id){
   const hd = STATE.horseData[id];
   showModal(`
-    <h3>Set Exact Prepared Bag Count</h3>
-    <div class="sub" style="margin-bottom:10px;">Use this to correct the count if it drifts from what's actually at the barn — mistakes happen.</div>
-    <label>Days Remaining</label><input type="number" inputmode="decimal" step="0.5" id="rb-days" value="${hd.preparedBags.daysRemaining}">
-    <div class="btn-row"><button class="btn btn-primary" id="rb-save">Save Exact Count</button></div>
+    <h3>Set Exact Bag Counts</h3>
+    <div class="sub" style="margin-bottom:10px;">Use this to correct the count if it drifts from what's actually at the barn — mistakes happen. AM and PM are tracked separately since they don't always run out at the same rate.</div>
+    <div class="field-row"><div><label>AM Bags</label><input type="number" inputmode="decimal" step="1" id="rb-am" value="${hd.preparedBags.am}"></div><div><label>PM Bags</label><input type="number" inputmode="decimal" step="1" id="rb-pm" value="${hd.preparedBags.pm}"></div></div>
+    <div class="btn-row"><button class="btn btn-primary" id="rb-save">Save Exact Counts</button></div>
   `);
   document.getElementById('rb-save').addEventListener('click', async ()=>{
-    hd.preparedBags.daysRemaining = parseFloat(document.getElementById('rb-days').value) || 0;
+    hd.preparedBags.am = parseFloat(document.getElementById('rb-am').value) || 0;
+    hd.preparedBags.pm = parseFloat(document.getElementById('rb-pm').value) || 0;
+    hd.preparedBags.lastAmDebitDate = todayStr(); // restart both clocks so future auto-debit starts from this correction
+    hd.preparedBags.lastPmDebitDate = todayStr();
     await sSet('horse-data:'+id, hd);
     closeModal(); renderScreen();
   });
@@ -2760,7 +2874,7 @@ function renderFeed(){
     const medsAM = (hd.medsPlan||[]).filter(m=>m.timing==='AM'||m.timing==='Both').map(m=>({name:m.name, amt:m.dose, unit:m.unit}));
     const medsPM = (hd.medsPlan||[]).filter(m=>m.timing==='PM'||m.timing==='Both').map(m=>({name:m.name, amt:m.dose, unit:m.unit}));
     const combinedPlan = { AM:[...(hd.feedingPlan.AM||[]), ...medsAM], PM:[...(hd.feedingPlan.PM||[]), ...medsPM] };
-    const days = hd.preparedBags.daysRemaining;
+    const days = bagsDaysLeft(hd.preparedBags);
     return `
       <div class="card">
         <div class="row">
@@ -2783,12 +2897,12 @@ function renderFeed(){
     </div>`;
   }).join('');
 
-  const criticalNow = STATE.horses.filter(h=>STATE.horseData[h.id].preparedBags.daysRemaining<3);
+  const criticalNow = STATE.horses.filter(h=>bagsDaysLeft(STATE.horseData[h.id].preparedBags)<3);
   return `
     ${criticalNow.length ? `
     <div class="loud-alert">
       <div class="loud-alert-icon">⚠️</div>
-      <div class="loud-alert-text">${criticalNow.map(h=>`${h.name}: ${STATE.horseData[h.id].preparedBags.daysRemaining}d left`).join(' · ')}
+      <div class="loud-alert-text">${criticalNow.map(h=>`${h.name}: ${bagsDaysLeft(STATE.horseData[h.id].preparedBags)}d left`).join(' · ')}
         <div class="loud-alert-sub">Prep more bags before this hits zero.</div>
       </div>
     </div>` : ''}
@@ -2841,8 +2955,7 @@ function openPrepBagsModal(horseId){
     <h3>Prep Bags</h3>
     <label>Horse</label>
     <select id="pb-horse">${STATE.horses.map(h=>`<option value="${h.id}" ${h.id===horseId?'selected':''}>${h.name}</option>`).join('')}</select>
-    <label>Days worth to prepare</label>
-    <input type="number" inputmode="decimal" id="pb-days" value="7" min="1">
+    <div class="field-row"><div><label>AM bags to prep</label><input type="number" inputmode="decimal" id="pb-am" value="7" min="0"></div><div><label>PM bags to prep</label><input type="number" inputmode="decimal" id="pb-pm" value="7" min="0"></div></div>
     <div id="pb-recipe" class="card" style="margin-top:10px;"></div>
     <div id="pb-preview" class="sub" style="margin-top:10px;"></div>
     <div class="btn-row"><button class="btn btn-primary" id="pb-save">Prep & Deduct from Backstock</button></div>
@@ -2850,25 +2963,28 @@ function openPrepBagsModal(horseId){
   `);
   function updatePreview(){
     const hId = document.getElementById('pb-horse').value;
-    const days = parseFloat(document.getElementById('pb-days').value)||0;
+    const amBags = parseFloat(document.getElementById('pb-am').value)||0;
+    const pmBags = parseFloat(document.getElementById('pb-pm').value)||0;
     const hd = STATE.horseData[hId];
     document.getElementById('pb-recipe').innerHTML = `
       <div class="name" style="margin-bottom:4px;">Recipe — each single AM bag / each single PM bag</div>
       ${renderFeedRecipe(hd.feedingPlan)}
       ${(hd.transitions||[]).some(t=>t.status==='active') ? `<div class="sub" style="margin-top:8px; color:#8C2F2F;">⚠ Active feed transition on this horse — this recipe is today's ratio only. If your prep window crosses a weekly step-up date, portion those later bags separately once the amount updates.</div>` : ''}
     `;
-    const items = [...(hd.feedingPlan.AM||[]), ...(hd.feedingPlan.PM||[])];
     const needed = {};
-    items.forEach(it=>{ needed[it.name] = (needed[it.name]||0) + it.amt*days; });
-    document.getElementById('pb-preview').innerHTML = `Backstock needed for ${days} days: ` + Object.keys(needed).map(n=>`${n} (${needed[n].toFixed(2)})`).join(', ');
+    (hd.feedingPlan.AM||[]).forEach(it=>{ needed[it.name] = (needed[it.name]||0) + it.amt*amBags; });
+    (hd.feedingPlan.PM||[]).forEach(it=>{ needed[it.name] = (needed[it.name]||0) + it.amt*pmBags; });
+    document.getElementById('pb-preview').innerHTML = `Backstock needed for ${amBags} AM + ${pmBags} PM bags: ` + Object.keys(needed).map(n=>`${n} (${needed[n].toFixed(2)})`).join(', ');
   }
   document.getElementById('pb-horse').addEventListener('change', updatePreview);
-  document.getElementById('pb-days').addEventListener('input', updatePreview);
+  document.getElementById('pb-am').addEventListener('input', updatePreview);
+  document.getElementById('pb-pm').addEventListener('input', updatePreview);
   updatePreview();
   document.getElementById('pb-save').addEventListener('click', async ()=>{
     const hId = document.getElementById('pb-horse').value;
-    const days = parseFloat(document.getElementById('pb-days').value)||0;
-    const result = await prepBags(hId, days);
+    const amBags = parseFloat(document.getElementById('pb-am').value)||0;
+    const pmBags = parseFloat(document.getElementById('pb-pm').value)||0;
+    const result = await prepBags(hId, amBags, pmBags);
     if(!result.ok){
       document.getElementById('pb-result').innerHTML = `<div class="banner" style="background:#8C2F2F;">Not enough backstock for: ${result.shortfalls.join(', ')}. Add stock first.</div>`;
     } else {
@@ -3009,41 +3125,87 @@ function attachCareOverviewHandlers(){
 
 /* ============================= REPORTS TAB ============================= */
 function renderReportsOverview(){
-  const allReports = STATE.horses.flatMap(h=>(STATE.horseData[h.id].aiReports||[]).map(r=>({...r, horseName:h.name, horseId:h.id}))).sort((a,b)=>b.date.localeCompare(a.date));
+  const allReports = STATE.horses.flatMap(h=>(STATE.horseData[h.id].aiReports||[]).map(r=>({...r, horseName:h.name, horseId:h.id}))).sort((a,b)=>(b.createdAt||b.date).localeCompare(a.createdAt||a.date));
   return `
     <div class="section-label">— New AI Progress Report —</div>
     <div class="card">
       <label>Horse</label>
       <select id="rep-horse">${STATE.horses.map(h=>`<option value="${h.id}">${h.name}</option>`).join('')}</select>
-      <label>Photo</label>
-      <div class="photo-preview" id="rep-photo-preview">Tap to choose photo</div>
-      <input type="file" accept="image/*" id="rep-photo-input" style="display:none;">
+      <label>Photos</label>
+      <div id="rep-photo-list" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:6px;"></div>
+      <button class="btn-sm" id="rep-add-photo">📷 Add Photo</button>
+      <input type="file" accept="image/*" multiple id="rep-photo-input" style="display:none;">
       <label>Qualitative Notes</label>
       <textarea id="rep-notes" placeholder="Topline, attitude, anything you've noticed..."></textarea>
       <div class="btn-row"><button class="btn btn-primary" id="rep-generate">Generate AI Report</button></div>
     </div>
     <div class="section-label">— Past Reports —</div>
-    ${allReports.length? allReports.map(r=>`
+    ${allReports.length? allReports.map((r, idx)=>{
+      const thumbs = r.photos || (r.photo ? [r.photo] : []);
+      const key = 'report-'+r.id;
+      const isOpen = EXPANDED_YEARS[key] !== undefined ? EXPANDED_YEARS[key] : idx===0; // most recent open by default
+      EXPANDED_YEARS[key] = isOpen; // lock in the default so the toggle handler always has an accurate current state
+      const roleBlock = (label, role, questions)=> questions && questions.length ? `
+        <div style="margin-top:12px;">
+          <div class="name" style="font-size:12px; color:var(--sage);">FOR ${label.toUpperCase()}</div>
+          ${questions.map(q=>`<div class="sub" style="margin-top:4px;">• ${q}</div>`).join('')}
+          <div class="tag" data-mailto data-role="${role}" data-report="${r.id}" data-horse="${r.horseId}" style="margin-top:6px;">✉ Send to ${label}</div>
+        </div>` : '';
+      return `
       <div class="card">
-        <div class="row"><div class="report-title">${r.horseName}</div><div class="report-date">${fmtDate(r.date)}</div></div>
-        <div class="report-body">${r.assessment}</div>
-        <div class="tag-row">
-          ${r.trainerQuestions.length?`<div class="tag" data-mailto data-role="trainer" data-report="${r.id}" data-horse="${r.horseId}">✉ ${r.trainerQuestions.length} for Trainer</div>`:''}
-          ${r.vetQuestions.length?`<div class="tag" data-mailto data-role="vet" data-report="${r.id}" data-horse="${r.horseId}">✉ ${r.vetQuestions.length} for Vet</div>`:''}
-          ${r.farrierQuestions.length?`<div class="tag" data-mailto data-role="farrier" data-report="${r.id}" data-horse="${r.horseId}">✉ ${r.farrierQuestions.length} for Farrier</div>`:''}
-          ${r.bodyworkQuestions.length?`<div class="tag" data-mailto data-role="bodywork" data-report="${r.id}" data-horse="${r.horseId}">✉ ${r.bodyworkQuestions.length} for Bodywork</div>`:''}
-        </div>
+        <button class="row" data-report-toggle="${key}" style="width:100%; background:none; border:none; text-align:left; padding:0; cursor:pointer;">
+          <div class="report-title">${r.horseName}</div>
+          <div style="display:flex; align-items:center; gap:8px;"><div class="report-date">${fmtDate(r.date)}</div><span style="color:var(--brass);">${isOpen?'▾':'▸'}</span></div>
+        </button>
+        ${thumbs.length ? `<div style="display:flex; gap:6px; margin:8px 0; flex-wrap:wrap;">${thumbs.slice(0, isOpen?thumbs.length:3).map(t=>`<div style="width:70px; height:93px; border-radius:6px; background-image:url(${t}); background-size:cover; background-position:center;"></div>`).join('')}</div>` : ''}
+        ${isOpen ? `
+          <div class="report-body">${r.assessment}</div>
+          ${r.changeSinceLast ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--paper);"><div class="name" style="font-size:12px; color:var(--sage);">WHAT'S CHANGED SINCE LAST TIME</div><div class="sub" style="margin-top:4px;">${r.changeSinceLast}</div></div>` : ''}
+          ${r.nutritionNote ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--paper);"><div class="name" style="font-size:12px; color:var(--sage);">NUTRITION OBSERVATION</div><div class="sub" style="margin-top:4px;">${r.nutritionNote}</div></div>` : ''}
+          ${roleBlock('Trainer','trainer', r.trainerQuestions)}
+          ${(r.farrierQuestions&&r.farrierQuestions.length) || (r.bodyworkQuestions&&r.bodyworkQuestions.length) ? `
+          <div style="margin-top:10px;">
+            <div class="name" style="font-size:11px; color:var(--brass);">FYI FOR TRAINER TO RELAY</div>
+            ${r.farrierQuestions&&r.farrierQuestions.length ? `<div class="sub" style="margin-top:4px; font-style:italic;">Farrier: ${r.farrierQuestions.join(' / ')}</div>` : ''}
+            ${r.bodyworkQuestions&&r.bodyworkQuestions.length ? `<div class="sub" style="margin-top:4px; font-style:italic;">Bodywork: ${r.bodyworkQuestions.join(' / ')}</div>` : ''}
+          </div>` : ''}
+          ${roleBlock('Vet','vet', r.vetQuestions)}
+          ${roleBlock('Farrier','farrier', r.farrierQuestions)}
+          ${roleBlock('Bodywork','bodywork', r.bodyworkQuestions)}
+        ` : `<div class="report-body" style="opacity:.75;">${(r.assessment||'').slice(0,140)}${(r.assessment||'').length>140?'…':''}</div>`}
       </div>
-    `).join('') : '<div class="empty">No reports generated yet.</div>'}
+    `;}).join('') : '<div class="empty">No reports generated yet.</div>'}
   `;
 }
 function attachReportsOverviewHandlers(){
-  const preview = document.getElementById('rep-photo-preview');
+  const listEl = document.getElementById('rep-photo-list');
   const input = document.getElementById('rep-photo-input');
-  let photoData = null;
-  preview.addEventListener('click', ()=>input.click());
+  let reportPhotos = []; // full analysis-quality images, kept in memory only for this generation
+  function renderPhotoList(){
+    listEl.innerHTML = reportPhotos.map((p,i)=>`
+      <div style="position:relative; width:70px; height:93px;">
+        <div style="width:70px; height:93px; border-radius:6px; background-image:url(${p}); background-size:cover; background-position:center;"></div>
+        <button data-rmphoto="${i}" style="position:absolute; top:-6px; right:-6px; width:20px; height:20px; border-radius:50%; background:#8C2F2F; color:#fff; border:none; font-size:11px; line-height:1;">✕</button>
+      </div>`).join('') || '<div class="sub">No photos added yet.</div>';
+    listEl.querySelectorAll('[data-rmphoto]').forEach(b=>b.addEventListener('click', ()=>{
+      reportPhotos.splice(parseInt(b.dataset.rmphoto), 1);
+      renderPhotoList();
+    }));
+  }
+  renderPhotoList();
+  document.querySelectorAll('[data-report-toggle]').forEach(b=>b.addEventListener('click', ()=>{
+    const key = b.dataset.reportToggle;
+    EXPANDED_YEARS[key] = !EXPANDED_YEARS[key];
+    renderScreen();
+  }));
+  document.getElementById('rep-add-photo').addEventListener('click', ()=>input.click());
   input.addEventListener('change', async ()=>{
-    if(input.files[0]){ photoData = await compressImage(input.files[0]); preview.style.backgroundImage = `url(${photoData})`; preview.textContent=''; }
+    for(const file of input.files){
+      const compressed = await compressImage(file); // full quality for AI analysis, kept in memory only
+      reportPhotos.push(compressed);
+    }
+    input.value = '';
+    renderPhotoList();
   });
   document.getElementById('rep-generate').addEventListener('click', async (e)=>{
     const horseId = document.getElementById('rep-horse').value;
@@ -3051,19 +3213,19 @@ function attachReportsOverviewHandlers(){
     const btn = e.target;
     btn.innerHTML = '<span class="spinner"></span>Generating...'; btn.disabled = true;
     try{
-      const result = await generateAIReport(horseId, photoData, notes);
+      const result = await generateAIReport(horseId, reportPhotos, notes);
       const hd = STATE.horseData[horseId];
       hd.aiReports = hd.aiReports || [];
-      const report = { id:uid(), date: todayStr(), photo: photoData, notes, assessment: result.assessment, trainerQuestions: result.trainerQuestions||[], vetQuestions: result.vetQuestions||[], farrierQuestions: result.farrierQuestions||[], bodyworkQuestions: result.bodyworkQuestions||[] };
+      // Store only small thumbnails long-term — full-res copies were only needed transiently for the AI call above.
+      const thumbnails = await Promise.all(reportPhotos.map(p=>recompressDataUrl(p, 220, 0.5)));
+      const report = { id:uid(), date: todayStr(), createdAt: new Date().toISOString(), photos: thumbnails, notes, assessment: result.assessment, changeSinceLast: result.changeSinceLast||null, nutritionNote: result.nutritionNote||null, trainerQuestions: result.trainerQuestions||[], vetQuestions: result.vetQuestions||[], farrierQuestions: result.farrierQuestions||[], bodyworkQuestions: result.bodyworkQuestions||[] };
       hd.aiReports.push(report);
       // feed into training notes journal too
       hd.trainingNotes = hd.trainingNotes || [];
       hd.trainingNotes.push({ id:uid(), date: todayStr(), author:'AI Report', content: result.assessment, source:'ai-report' });
-      // feed photo into the visual timeline too, if one was provided
-      if(photoData){
-        hd.photoLog = hd.photoLog || [];
-        hd.photoLog.push({ id:uid(), date: todayStr(), photo: photoData, caption:'AI Progress Report' });
-      }
+      // feed full-quality photos into the visual timeline too, one entry per photo
+      hd.photoLog = hd.photoLog || [];
+      reportPhotos.forEach(p=>hd.photoLog.push({ id:uid(), date: todayStr(), photo: p, caption:'AI Progress Report' }));
       await sSet('horse-data:'+horseId, hd);
       renderScreen();
     }catch(err){
@@ -3369,7 +3531,7 @@ function generateBarnExport(){
   STATE.horses.forEach(h=>{
     const hd = STATE.horseData[h.id];
     const skipped = (hd.skipDates||[]).includes(today);
-    text += `${h.name}${skipped?' (SKIP TODAY)':''} — Bags at barn: ${hd.preparedBags.daysRemaining} days left${hd.preparedBags.daysRemaining<3?' ⚠ NEEDS RESTOCK':''}\n`;
+    text += `${h.name}${skipped?' (SKIP TODAY)':''} — Bags at barn: ${bagsDaysLeft(hd.preparedBags)} days left (AM: ${hd.preparedBags.am}, PM: ${hd.preparedBags.pm})${bagsDaysLeft(hd.preparedBags)<3?' ⚠ NEEDS RESTOCK':''}\n`;
     text += `  AM: ${(hd.feedingPlan.AM||[]).map(i=>`${i.name} ${i.amt} ${i.unit}`).join(', ')||'—'}\n`;
     text += `  PM: ${(hd.feedingPlan.PM||[]).map(i=>`${i.name} ${i.amt} ${i.unit}`).join(', ')||'—'}\n\n`;
   });
