@@ -167,6 +167,7 @@ async function callClaude(body){
     err.noApiKey = true;
     throw err;
   }
+  await trackAiUsage();
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
     headers:{
@@ -182,6 +183,13 @@ async function callClaude(body){
     throw new Error(`API error (${resp.status}): ${errText.slice(0,200)}`);
   }
   return await resp.json();
+}
+async function trackAiUsage(){
+  const monthKey = todayStr().slice(0,7); // YYYY-MM
+  let usage = await sGet('ai-usage');
+  if(!usage || usage.month !== monthKey) usage = { month: monthKey, count: 0 };
+  usage.count++;
+  await sSet('ai-usage', usage);
 }
 function fmtDate(d){ return new Date(d+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
 function ageFromBirthDate(birthDate){
@@ -274,7 +282,7 @@ function seedInventory(){
   };
 }
 function emptyHorseData(){
-  return { feedingPlan:{AM:[], PM:[]}, medsPlan:[], skipDates:[], bcsLog:[], vetRecords:[], trainingNotes:[], aiReports:[], preparedBags:{am:0, pm:0, lastPrepDate:null, lastAmDebitDate:null, lastPmDebitDate:null}, photoLog:[], transitions:[], dailyCheckins:[], forage:emptyForage() };
+  return { feedingPlan:{AM:[], PM:[]}, pendingFeedingPlan:null, workLevel:'maintenance', medsPlan:[], skipDates:[], bcsLog:[], vetRecords:[], trainingNotes:[], aiReports:[], preparedBags:{am:0, pm:0, lastPrepDate:null, lastAmDebitDate:null, lastPmDebitDate:null}, photoLog:[], transitions:[], dailyCheckins:[], forage:emptyForage() };
 }
 function emptyForage(){
   return {
@@ -636,6 +644,51 @@ async function runMigrations(){
     applied.push(MIG_ID_13);
     await sSet('migrations', applied);
   }
+
+  // Fourteenth pass: reclassify Quill's breeder-provided hoof radiographs from "vet" to "farrier"
+  // now that the Care tab has dedicated categories - this record is farrier-relevant, not medical.
+  const MIG_ID_14 = 'quill-hoof-radiographs-farrier-category-2026-07';
+  if(!applied.includes(MIG_ID_14)){
+    const quillHd6 = STATE.horseData['quill'];
+    if(quillHd6 && quillHd6.vetRecords){
+      const rec = quillHd6.vetRecords.find(r=>r.notes && r.notes.startsWith('Breeder-provided pre-existing radiographs'));
+      if(rec) rec.type = 'farrier';
+      await sSet('horse-data:quill', quillHd6);
+    }
+    applied.push(MIG_ID_14);
+    await sSet('migrations', applied);
+  }
+
+  // Fifteenth pass: backfill the staged feeding-plan-changes system and work level tracking
+  // for horses that predate these fields.
+  const MIG_ID_15 = 'staged-feeding-plan-and-work-level-2026-07';
+  if(!applied.includes(MIG_ID_15)){
+    for(const h of STATE.horses){
+      const hd = STATE.horseData[h.id];
+      if(!hd) continue;
+      let changed = false;
+      if(hd.pendingFeedingPlan === undefined){ hd.pendingFeedingPlan = null; changed = true; }
+      if(hd.workLevel === undefined){ hd.workLevel = 'maintenance'; changed = true; }
+      if(changed) await sSet('horse-data:'+h.id, hd);
+    }
+    applied.push(MIG_ID_15);
+    await sSet('migrations', applied);
+  }
+
+  // Sixteenth pass: backfill weightSource on existing BCS log entries (assume 'measured' for
+  // anything logged before the weight-tape estimator existed).
+  const MIG_ID_16 = 'bcs-weight-source-2026-07';
+  if(!applied.includes(MIG_ID_16)){
+    for(const h of STATE.horses){
+      const hd = STATE.horseData[h.id];
+      if(!hd || !hd.bcsLog) continue;
+      let changed = false;
+      hd.bcsLog.forEach(b=>{ if(b.weightSource===undefined){ b.weightSource='measured'; changed=true; } });
+      if(changed) await sSet('horse-data:'+h.id, hd);
+    }
+    applied.push(MIG_ID_16);
+    await sSet('migrations', applied);
+  }
 }
 
 async function loadAll(){
@@ -668,6 +721,9 @@ async function loadAll(){
   STATE.lastBackupDate = lastBackup;
 
   STATE.apiKey = await sGet('anthropic-api-key');
+  const monthKey = todayStr().slice(0,7);
+  let aiUsage = await sGet('ai-usage');
+  STATE.aiUsage = (aiUsage && aiUsage.month===monthKey) ? aiUsage : { month: monthKey, count: 0 };
 
   for(const h of STATE.horses){
     await sleep(80);
@@ -737,6 +793,26 @@ function collectFullBackup(){
     requests: STATE.requests,
     customSupplements: STATE.customSupplements,
   };
+}
+async function downloadHorseHistory(horseId){
+  const h = STATE.horses.find(x=>x.id===horseId);
+  const hd = STATE.horseData[horseId];
+  const backup = {
+    exportVersion: 1,
+    exportedAt: todayStr(),
+    note: `Full record for ${h.name} only, exported from Stable. This is a reference document, not a restorable backup for the app.`,
+    horse: h,
+    horseData: hd,
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${h.name.toLowerCase()}-history-${todayStr()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 async function downloadBackup(){
   const backup = collectFullBackup();
@@ -966,7 +1042,7 @@ async function generateAIReport(horseId, photoDataUrls, qualNotes){
   const sys = `You are an experienced equine bodywork and conditioning assessor helping a horse owner track a horse's progress over time. You will be shown one or more photos (if multiple, they may be different angles of the same check-in) and given context, including today's date, season, current feeding plan, and (if available) the assessment from the horse's last report. Respond ONLY with valid JSON, no markdown fences, no preamble, in this exact shape:
 {"assessment":"2-4 sentence plain-language visual + qualitative assessment, noting posture, topline, muscling, weight, and anything relevant to soundness or condition. Be specific but appropriately cautious - you are not a substitute for a vet exam.",
 "changeSinceLast":"1-3 sentences on what's genuinely different from the last report, or null if there is no prior report to compare against. Do not force a comparison if nothing meaningful changed - 'largely unchanged since last check-in' is a fine, honest answer.",
-"nutritionNote":"1-2 sentences specifically weighing the horse's visual condition (weight, topline, ribs, overall fill) against what's actually in the current feeding plan below — flag it if intake looks mismatched with appearance in either direction (under- or over-conditioned relative to what's being fed), or null if intake and appearance look reasonably matched. Do not force a concern that isn't there.",
+"nutritionNote":"1-2 sentences specifically weighing the horse's visual condition (weight, topline, ribs, overall fill) against what's actually in the current feeding plan below — flag it if intake looks mismatched with appearance in either direction (under- or over-conditioned relative to what's being fed), or null if intake and appearance look reasonably matched. Do not force a concern that isn't there. If the horse's visual condition in the photo looks meaningfully different from what the logged weight/BCS below would suggest, say so and suggest a fresh weigh-in or weight-tape reading — do NOT estimate or state a specific pound figure yourself, since that's not something a photo can support reliably.",
 "trainerQuestions":["q1","q2"],
 "vetQuestions":["q1"],
 "farrierQuestions":["q1"],
@@ -1510,7 +1586,15 @@ const BUILTIN_NUTRIENT_DB = {
 /* Safe upper limits, scaled from NRC reference points for a ~1100lb mature horse.
    Vitamin E: NRC reports no established toxicity, but 10,000 IU/day is the commonly used safe-upper-limit reference.
    Selenium: NRC max tolerable = 2mg/kg dietary DM ≈ 20mg/day for an 1100lb horse at ~2% BW dry matter intake — a genuinely narrow margin, most safety-critical nutrient here. */
-function safeLimits(heightHH, bodyweightLb){
+function getBestWeightEstimate(horse, hd){
+  // Priority: most recent logged weight (measured or tape-estimate) > generic default.
+  // Height alone is deliberately NOT used to estimate weight - research consistently ranks it
+  // as a weaker predictor than girth/length, so it's not worth the false precision.
+  const lastBcs = (hd.bcsLog||[]).slice(-1)[0];
+  if(lastBcs && lastBcs.weight) return { weight: lastBcs.weight, source: lastBcs.weightSource||'measured', date: lastBcs.date };
+  return { weight: 1100, source: 'default', date: null };
+}
+function safeLimits(bodyweightLb){
   const refWeight = bodyweightLb || 1100;
   const scale = refWeight/1100;
   return {
@@ -1570,7 +1654,8 @@ function computeNutritionSnapshot(hd, horse){
     });
     perItem.push({ name:it.name, amt:it.amt, unit:it.unit, nutrients:itemNutrients, confidence:nut.confidence, source:nut.source });
   });
-  const limits = safeLimits(horse.heightHH, (hd.bcsLog||[]).slice(-1)[0]?.weight);
+  const weightInfo = getBestWeightEstimate(horse, hd);
+  const limits = safeLimits(weightInfo.weight);
   // Ca:P ratio — only meaningful if both are actually tracked (not all-null)
   let caPRatio = null, caPStatus = 'unknown';
   if(totals.ca>0 && totals.p>0){
@@ -1579,7 +1664,7 @@ function computeNutritionSnapshot(hd, horse){
     else if(caPRatio > 2.2) caPStatus = 'high'; // too much Ca relative to P
     else caPStatus = 'ok';
   }
-  return { totals, untracked, contributions, limits, perItem, notOnLabel, caPRatio, caPStatus };
+  return { totals, untracked, contributions, limits, perItem, notOnLabel, caPRatio, caPStatus, weightInfo };
 }
 function checkNewSupplementSafety(hd, horse, itemName, amt){
   const nut = lookupNutrient(itemName);
@@ -1847,11 +1932,15 @@ function openAddHorseModal(){
 }
 function openEditProfile(id){
   const h = STATE.horses.find(x=>x.id===id);
+  const hd = STATE.horseData[id];
+  const weightInfo = getBestWeightEstimate(h, hd);
   showModal(`
     <h3>Edit Profile — ${h.name}</h3>
     <label>Registered Name</label><input type="text" id="ep-regname" value="${h.registeredName||''}">
     <label>Breeder</label><input type="text" id="ep-breeder" value="${h.breeder||''}">
     <div class="field-row"><div><label>Birth Date</label><input type="date" id="ep-birthdate" value="${h.birthDate||''}"></div><div><label>Height (hh)</label><input type="number" inputmode="decimal" step="0.1" id="ep-height" value="${h.heightHH||''}"></div></div>
+    <label>Weight (lb)</label><input type="number" inputmode="decimal" id="ep-weight" value="${weightInfo.source==='default' ? '' : weightInfo.weight}">
+    <div class="sub" style="margin-top:-6px; margin-bottom:10px;">${weightInfo.source==='default' ? 'No weight logged yet.' : `Last updated ${fmtDate(weightInfo.date)}${weightInfo.source==='tape-estimate'?' (weight-tape estimate)':''}.`} Saved here as a new dated entry, so the trend history in Care → Medical stays intact. For the weight-tape calculator or to log a BCS score alongside it, use Care → Medical instead.</div>
     <label>Gotcha Date (when you took ownership)</label><input type="date" id="ep-gotcha" value="${h.gotchaDate||''}">
     <div class="field-row"><div><label>Registered Breed</label><input type="text" id="ep-breed" value="${h.breed||''}"></div><div><label>Sex</label><input type="text" id="ep-sex" value="${h.sex||''}"></div></div>
     <div class="field-row"><div><label>Color</label><input type="text" id="ep-color" value="${h.color||''}"></div><div><label>Markings</label><input type="text" id="ep-markings" value="${h.markings||''}"></div></div>
@@ -1893,6 +1982,21 @@ function openEditProfile(id){
     h.microchipNumber = document.getElementById('ep-microchip').value.trim();
     h.registrationNumber = document.getElementById('ep-regnum').value.trim();
     await sSet('horses-roster', STATE.horses);
+    const newWeight = parseFloat(document.getElementById('ep-weight').value) || null;
+    if(newWeight && newWeight !== weightInfo.weight){
+      hd.bcsLog = hd.bcsLog || [];
+      const today = todayStr();
+      const todayEntry = hd.bcsLog.find(b=>b.date===today);
+      const lastScore = (hd.bcsLog.slice(-1)[0]||{}).score || null;
+      if(todayEntry){
+        todayEntry.weight = newWeight;
+        todayEntry.weightSource = 'measured';
+      } else {
+        hd.bcsLog.push({ date: today, score: lastScore, weight: newWeight, weightSource: 'measured', notes: '' });
+        hd.bcsLog.sort((a,b)=>a.date.localeCompare(b.date));
+      }
+      await sSet('horse-data:'+id, hd);
+    }
     closeModal(); renderScreen();
   });
 }
@@ -1921,6 +2025,9 @@ function openEditHorsePhoto(id){
 /* ============================= HORSE DETAIL ============================= */
 function renderHorseProfile(id){
   const h = STATE.horses.find(x=>x.id===id);
+  const hd = STATE.horseData[id];
+  const weightInfo = getBestWeightEstimate(h, hd);
+  const weightSourceLabel = { measured:'', 'tape-estimate':' (weight-tape estimate)', default:' (no log yet — generic default)' }[weightInfo.source] || '';
   return `
     <button class="btn-sm" id="backBtn">\u2190 All Horses</button>
     <div class="section-label" style="margin-top:14px;">— ${h.name} — <span class="add-link" id="editPhotoBtn">Change Photo</span></div>
@@ -1936,6 +2043,7 @@ function renderHorseProfile(id){
       <div class="name" style="font-size:11px; color:var(--sage); margin-bottom:4px;">BASIC INFO</div>
       <div class="row"><div class="name">Age</div><div class="sub">${ageFromBirthDate(h.birthDate)||'Unknown'}</div></div>
       <div class="row" style="margin-top:6px;"><div class="name">Height</div><div class="sub">${h.heightHH?h.heightHH+'hh':'Unknown'}</div></div>
+      <div class="row" style="margin-top:6px;"><div class="name">Weight</div><div class="sub">${weightInfo.weight} lb${weightSourceLabel}${weightInfo.date?' · '+fmtDate(weightInfo.date):''}</div></div>
       <div class="row" style="margin-top:6px;"><div class="name">Sex</div><div class="sub">${h.sex||'—'}</div></div>
       <div class="row" style="margin-top:6px;"><div class="name">Color</div><div class="sub">${h.color||'—'}</div></div>
       <div class="row" style="margin-top:6px;"><div class="name">Markings</div><div class="sub">${h.markings||'—'}</div></div>
@@ -1951,6 +2059,8 @@ function renderHorseProfile(id){
       <div class="row"><div class="name">Breeder</div><div class="sub">${h.breeder||'—'}</div></div>
       <div class="row" style="margin-top:6px;"><div class="name">Breeding</div></div><div class="sub">${h.breeding||'No pedigree on file'}</div>
     </div>
+
+    <div class="btn-row"><button class="btn-sm" id="exportHorseHistory">Export ${h.name}'s Full History (.json)</button></div>
   `;
 }
 function attachHorseProfileHandlers(id){
@@ -1959,6 +2069,7 @@ function attachHorseProfileHandlers(id){
   document.getElementById('editProfile').addEventListener('click', ()=>openEditProfile(id));
   document.querySelectorAll('[data-goto-feed]').forEach(b=>b.addEventListener('click', ()=>{ NAV_ORIGIN='profile'; ACTIVE_TAB='feed'; render(); }));
   document.querySelectorAll('[data-goto-care]').forEach(b=>b.addEventListener('click', ()=>{ NAV_ORIGIN='profile'; ACTIVE_TAB='care'; render(); }));
+  document.getElementById('exportHorseHistory').addEventListener('click', ()=>downloadHorseHistory(id));
 }
 
 function renderHorseFeed(id){
@@ -1984,15 +2095,25 @@ function renderHorseFeed(id){
       <div class="btn-row"><button class="btn-sm" id="prepMoreBtn">Prep More</button><button class="btn-sm" id="resetBagsBtn">Set Exact Count</button></div></div>
       <div class="sub" style="margin-top:8px;">AM: ${hd.preparedBags.am} bags · PM: ${hd.preparedBags.pm} bags</div>
       <div class="sub" style="margin-top:4px; font-size:10.5px; opacity:.75;">AM debits once you open the app after 8:00am; PM after 6:00pm. There's no background timer — it checks the time whenever you open Stable, not while it's closed.</div>
+      ${hd.pendingFeedingPlan ? `<div class="sub" style="margin-top:8px; color:#8C2F2F; font-weight:600;">⚠ Feeding plan has unapplied changes — bags prepped right now still use the plan below (the old one). See Pending Changes to review.</div>` : ''}
     </div>
 
     <div class="section-label">— Forage — <span class="add-link" id="editForage">Edit</span></div>
     ${renderForage(hd.forage)}
 
-    <div class="section-label">— Feeding Plan — <span class="add-link" id="editFeedPlan">Edit</span></div>
+    <div class="section-label">— Feeding Plan (Active) — <span class="add-link" id="editFeedPlan">Edit</span></div>
     <div class="card">
       ${renderFeedRecipe(hd.feedingPlan, hd.transitions)}
     </div>
+
+    ${hd.pendingFeedingPlan ? `
+    <div class="section-label" style="color:#8C2F2F;">— Pending Changes (not yet applied) —</div>
+    <div class="card" style="border:1px solid #8C2F2F;">
+      <div class="sub" style="margin-bottom:8px;">This is what Prep Bags and the Nutrition Snapshot will use once you apply it. Until then, they keep using the Active plan above.</div>
+      ${renderFeedRecipe(hd.pendingFeedingPlan, hd.transitions)}
+      <div class="btn-row" style="margin-top:10px;"><button class="btn btn-primary" id="applyPendingPlan">Apply Now</button><button class="btn-sm" id="discardPendingPlan" style="color:#8C2F2F;">Discard</button></div>
+    </div>
+    ` : ''}
 
     <div class="section-label">— Meds — <span class="add-link" id="addMed">+ Add</span></div>
     ${(hd.medsPlan||[]).length? hd.medsPlan.map(m=>`<div class="card row"><div><div class="name">${m.name}</div><div class="sub">${m.dose} ${m.unit} · ${m.timing}${m.notes?' · '+m.notes:''}</div></div></div>`).join('') : '<div class="empty">No meds on file.</div>'}
@@ -2012,6 +2133,37 @@ function attachHorseFeedHandlers(id){
   document.getElementById('prepMoreBtn').addEventListener('click', ()=>openPrepBagsModal(id));
   document.getElementById('resetBagsBtn').addEventListener('click', ()=>openResetBagsModal(id));
   document.getElementById('editFeedPlan').addEventListener('click', ()=>openEditFeedingPlan(id));
+  const applyBtn = document.getElementById('applyPendingPlan');
+  if(applyBtn) applyBtn.addEventListener('click', ()=>{
+    const hd = STATE.horseData[id];
+    showModal(`
+      <h3>Apply this feeding plan?</h3>
+      <div class="sub" style="margin-bottom:10px;">From now on, Prep Bags and the Nutrition Snapshot will use this plan. Bags already made under the old plan aren't affected — only new ones you prep going forward.</div>
+      <div class="btn-row"><button class="btn-sm" id="cancel-apply-plan">Cancel</button><button class="btn btn-primary" id="confirm-apply-plan">Apply Now</button></div>
+    `);
+    document.getElementById('cancel-apply-plan').addEventListener('click', ()=>{ closeModal(); renderScreen(); });
+    document.getElementById('confirm-apply-plan').addEventListener('click', async ()=>{
+      hd.feedingPlan = hd.pendingFeedingPlan;
+      hd.pendingFeedingPlan = null;
+      await sSet('horse-data:'+id, hd);
+      closeModal(); renderScreen();
+    });
+  });
+  const discardBtn = document.getElementById('discardPendingPlan');
+  if(discardBtn) discardBtn.addEventListener('click', ()=>{
+    showModal(`
+      <h3 style="color:#8C2F2F;">Discard pending changes?</h3>
+      <div class="sub" style="margin-bottom:10px;">The active plan stays exactly as it is. This can't be undone.</div>
+      <div class="btn-row"><button class="btn-sm" id="cancel-discard-plan">Cancel</button><button class="btn btn-primary" id="confirm-discard-plan" style="background:#8C2F2F;">Discard</button></div>
+    `);
+    document.getElementById('cancel-discard-plan').addEventListener('click', ()=>{ closeModal(); renderScreen(); });
+    document.getElementById('confirm-discard-plan').addEventListener('click', async ()=>{
+      const hd = STATE.horseData[id];
+      hd.pendingFeedingPlan = null;
+      await sSet('horse-data:'+id, hd);
+      closeModal(); renderScreen();
+    });
+  });
   document.querySelectorAll('[data-cancel-transition]').forEach(b=>b.addEventListener('click', ()=>cancelTransition(id, b.dataset.cancelTransition)));
   document.getElementById('editForage').addEventListener('click', ()=>openEditForage(id));
   document.getElementById('addMed').addEventListener('click', ()=>openAddMed(id));
@@ -2069,11 +2221,17 @@ function renderHorseCare(id){
 
   let body = '';
   if(cat.key==='training'){
+    const WORK_LABELS = { maintenance:'Maintenance (light/no riding)', light:'Light (1-3 hrs/wk, mostly walk/trot)', moderate:'Moderate (3-5 hrs/wk, trot/canter, some jumping)', heavy:'Heavy (4-5+ hrs/wk, cantering/galloping/jumping)' };
     body = `
+      <div class="section-label">— Work Level — <span class="add-link" id="editWorkLevel">Edit</span></div>
+      <div class="card">
+        <div class="sub">${WORK_LABELS[hd.workLevel||'maintenance']}</div>
+        <div class="sub" style="margin-top:6px; font-size:10px; opacity:.75;">Used to adjust the protein target in the Feed tab's Nutrition Snapshot. Definitions adapted from NRC work-intensity categories — <a href="${NRC_CITATIONS.ker}" target="_blank" style="color:var(--brass);">source</a>.</div>
+      </div>
       <div class="section-label">— Recent Check-Ins — <span class="add-link" id="quickCheckinDetail">+ Check In</span></div>
       ${renderCheckinStrip(hd.dailyCheckins)}
       <div class="section-label">— Photo Timeline — <span class="add-link" id="addPhotoLog">+ Add Photo</span></div>
-      ${renderPhotoGallery(hd.photoLog)}
+      ${renderPhotoGallery(hd.photoLog, id)}
       <div class="section-label">— Training Notes — <span class="add-link" id="addTrainingNote">+ Add</span></div>
       ${(hd.trainingNotes||[]).length? hd.trainingNotes.slice().reverse().map(n=>`
         <div class="timeline-item"><div class="timeline-date">${fmtDate(n.date)}</div><div class="timeline-author">${n.author}${n.source==='pasted-response'?' (pasted response)':''}</div><div class="timeline-content">${n.content}</div></div>
@@ -2125,15 +2283,68 @@ function renderHorseCare(id){
     <div class="btn-row"><button class="btn btn-primary" id="requestUpdateBtn">✉ Request Update</button><button class="btn-sm" id="pasteResponseBtn">Paste a Response</button></div>
   `;
 }
+function openEditWorkLevel(id){
+  const hd = STATE.horseData[id];
+  showModal(`
+    <h3>Edit Work Level</h3>
+    <div class="sub" style="margin-bottom:10px;">This feeds the protein target shown in the Feed tab's Nutrition Snapshot.</div>
+    <label>Current Work Level</label>
+    <select id="wl-select">
+      <option value="maintenance" ${hd.workLevel==='maintenance'?'selected':''}>Maintenance (light/no riding)</option>
+      <option value="light" ${hd.workLevel==='light'?'selected':''}>Light (1-3 hrs/wk, mostly walk/trot)</option>
+      <option value="moderate" ${hd.workLevel==='moderate'?'selected':''}>Moderate (3-5 hrs/wk, trot/canter, some jumping)</option>
+      <option value="heavy" ${hd.workLevel==='heavy'?'selected':''}>Heavy (4-5+ hrs/wk, cantering/galloping/jumping)</option>
+    </select>
+    <div class="btn-row"><button class="btn btn-primary" id="wl-save">Save</button></div>
+  `);
+  document.getElementById('wl-save').addEventListener('click', async ()=>{
+    hd.workLevel = document.getElementById('wl-select').value;
+    await sSet('horse-data:'+id, hd);
+    closeModal(); renderScreen();
+  });
+}
 function attachHorseCareHandlers(id){
   document.getElementById('backBtn').addEventListener('click', ()=>{
     if(NAV_ORIGIN==='profile'){ NAV_ORIGIN=null; ACTIVE_TAB='horses'; render(); }
     else { ACTIVE_HORSE=null; renderScreen(); }
   });
   document.querySelectorAll('[data-cat]').forEach(b=>b.addEventListener('click', ()=>{ CARE_CATEGORY=b.dataset.cat; renderScreen(); }));
+  const ewl = document.getElementById('editWorkLevel'); if(ewl) ewl.addEventListener('click', ()=>openEditWorkLevel(id));
   const qc = document.getElementById('quickCheckinDetail'); if(qc) qc.addEventListener('click', ()=>openQuickCheckin(id));
   const apl = document.getElementById('addPhotoLog'); if(apl) apl.addEventListener('click', ()=>openAddPhotoLog(id));
-  document.querySelectorAll('[data-gallery-photo]').forEach(img=>img.addEventListener('click', ()=>openPhotoLightbox(img.dataset.galleryPhoto, img.dataset.galleryCaption)));
+  document.querySelectorAll('[data-gallery-photo]').forEach(img=>img.addEventListener('click', ()=>{
+    if(PHOTO_SELECT_MODE){
+      const pid = img.dataset.galleryId;
+      if(PHOTO_SELECTED.has(pid)) PHOTO_SELECTED.delete(pid); else PHOTO_SELECTED.add(pid);
+      renderScreen();
+    } else {
+      openPhotoLightbox(img.dataset.galleryPhoto, img.dataset.galleryCaption, img.dataset.galleryId, img.dataset.galleryHorse);
+    }
+  }));
+  const pst = document.getElementById('photoSelectToggle');
+  if(pst) pst.addEventListener('click', ()=>{
+    PHOTO_SELECT_MODE = !PHOTO_SELECT_MODE;
+    PHOTO_SELECTED.clear();
+    renderScreen();
+  });
+  const pds = document.getElementById('photoDeleteSelected');
+  if(pds) pds.addEventListener('click', ()=>{
+    const count = PHOTO_SELECTED.size;
+    showModal(`
+      <h3 style="color:#8C2F2F;">Delete ${count} photo${count===1?'':'s'}?</h3>
+      <div class="sub" style="margin-bottom:10px;">This can't be undone.</div>
+      <div class="btn-row"><button class="btn-sm" id="cancel-bulk-delete">Cancel</button><button class="btn btn-primary" id="confirm-bulk-delete" style="background:#8C2F2F;">Delete</button></div>
+    `);
+    document.getElementById('cancel-bulk-delete').addEventListener('click', ()=>{ closeModal(); renderScreen(); });
+    document.getElementById('confirm-bulk-delete').addEventListener('click', async ()=>{
+      const hd = STATE.horseData[id];
+      hd.photoLog = (hd.photoLog||[]).filter(p=>!PHOTO_SELECTED.has(p.id));
+      await sSet('horse-data:'+id, hd);
+      PHOTO_SELECT_MODE = false;
+      PHOTO_SELECTED.clear();
+      closeModal(); renderScreen();
+    });
+  });
   const atn = document.getElementById('addTrainingNote'); if(atn) atn.addEventListener('click', ()=>openAddTrainingNote(id));
   const evc = document.getElementById('editVetCtx'); if(evc) evc.addEventListener('click', ()=>openEditVetContext(id));
   const abcs = document.getElementById('addBcs'); if(abcs) abcs.addEventListener('click', ()=>openAddBcs(id));
@@ -2208,22 +2419,46 @@ function renderVetRecordsByYear(vetRecords){
       </div>`;
   }).join('');
 }
-function renderPhotoGallery(photoLog){
+let PHOTO_SELECT_MODE = false;
+let PHOTO_SELECTED = new Set();
+function renderPhotoGallery(photoLog, horseId){
   if(!photoLog || photoLog.length===0) return '<div class="empty">No photos logged yet.</div>';
   const sorted = photoLog.slice().sort((a,b)=>b.date.localeCompare(a.date));
-  return `<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px;">
+  return `
+    <div class="btn-row" style="margin-bottom:8px;">
+      <button class="btn-sm" id="photoSelectToggle">${PHOTO_SELECT_MODE ? 'Cancel' : 'Select'}</button>
+      ${PHOTO_SELECT_MODE && PHOTO_SELECTED.size ? `<button class="btn-sm" id="photoDeleteSelected" style="color:#8C2F2F;">Delete ${PHOTO_SELECTED.size} Selected</button>` : ''}
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px;">
     ${sorted.map(p=>`
-      <div data-gallery-photo="${p.photo}" data-gallery-caption="${fmtDate(p.date)}${p.caption?' — '+p.caption.replace(/"/g,'&quot;'):''}" style="aspect-ratio:1; background-image:url(${p.photo}); background-size:cover; background-position:center; border-radius:4px; position:relative; cursor:pointer; border:1px solid var(--paper);">
+      <div data-gallery-photo="${p.photo}" data-gallery-caption="${fmtDate(p.date)}${p.caption?' — '+p.caption.replace(/"/g,'&quot;'):''}" data-gallery-id="${p.id}" data-gallery-horse="${horseId}" style="aspect-ratio:1; background-image:url(${p.photo}); background-size:cover; background-position:center; border-radius:4px; position:relative; cursor:pointer; border:1px solid var(--paper); ${PHOTO_SELECT_MODE && PHOTO_SELECTED.has(p.id) ? 'outline:3px solid var(--brass);' : ''}">
         <div style="position:absolute; bottom:0; left:0; right:0; background:rgba(31,46,35,.75); color:#fff; font-family:'JetBrains Mono',monospace; font-size:8px; padding:2px 4px;">${fmtDate(p.date)}</div>
+        ${PHOTO_SELECT_MODE ? `<div style="position:absolute; top:4px; right:4px; width:18px; height:18px; border-radius:50%; background:${PHOTO_SELECTED.has(p.id)?'var(--brass)':'rgba(255,255,255,.6)'}; border:1px solid #fff;"></div>` : ''}
       </div>
     `).join('')}
-  </div>`;
+    </div>`;
 }
-function openPhotoLightbox(photo, caption){
+function openPhotoLightbox(photo, caption, photoId, horseId){
   showModal(`
     <h3>${caption}</h3>
     <div class="photo-preview" style="height:320px; background-image:url(${photo});"></div>
+    ${photoId && horseId ? `<div class="btn-row" style="margin-top:10px;"><button class="btn-sm" id="lightbox-delete" style="color:#8C2F2F;">Delete Photo...</button></div>` : ''}
   `);
+  const delBtn = document.getElementById('lightbox-delete');
+  if(delBtn) delBtn.addEventListener('click', ()=>{
+    showModal(`
+      <h3 style="color:#8C2F2F;">Delete this photo?</h3>
+      <div class="sub" style="margin-bottom:10px;">This can't be undone. It only removes the photo from the timeline — not from any report it was originally attached to.</div>
+      <div class="btn-row"><button class="btn-sm" id="cancel-photo-delete">Cancel</button><button class="btn btn-primary" id="confirm-photo-delete" style="background:#8C2F2F;">Delete</button></div>
+    `);
+    document.getElementById('cancel-photo-delete').addEventListener('click', ()=>openPhotoLightbox(photo, caption, photoId, horseId));
+    document.getElementById('confirm-photo-delete').addEventListener('click', async ()=>{
+      const hd = STATE.horseData[horseId];
+      hd.photoLog = (hd.photoLog||[]).filter(p=>p.id!==photoId);
+      await sSet('horse-data:'+horseId, hd);
+      closeModal(); renderScreen();
+    });
+  });
 }
 function openAddPhotoLog(id){
   const hd = STATE.horseData[id];
@@ -2268,8 +2503,58 @@ function openEditIntervals(id){
   });
 }
 
-function computeNutritionAlerts(snap){
+const NRC_CITATIONS = {
+  merck: 'https://www.merckvetmanual.com/management-and-nutrition/nutrition-horses/nutritional-requirements-of-horses-and-other-equids',
+  ker: 'https://ker.com/equinews/properly-conduct-equine-nutrition-evaluation-figuring-requirements/',
+  msstate: 'https://extension.msstate.edu/publications/protein-requirements-for-mature-horses',
+};
+function computeMacroTarget(horse, hd){
+  const workLevel = hd.workLevel || 'maintenance';
+  const ageYears = horse.birthDate ? (Date.now() - new Date(horse.birthDate)) / (365.25*86400000) : null;
+  let baseCP, stage;
+  if(ageYears===null){ baseCP=11; stage='mature (age unknown)'; }
+  else if(ageYears<0.5){ baseCP=18; stage='foal'; }
+  else if(ageYears<1){ baseCP=16; stage='weanling'; }
+  else if(ageYears<2){ baseCP=14; stage='yearling'; }
+  else if(ageYears<3){ baseCP=12; stage='2-year-old'; }
+  else{ baseCP=11; stage='mature'; }
+  const isEasyKeeperBreed = /oldenburg|warmblood|gov\b|hanoverian|holsteiner|dutch|friesian|draft|pony|quarter/i.test(horse.breed||'');
+  const growing = ageYears!==null && ageYears<3;
+  let adjustedCP = baseCP;
+  if(growing && isEasyKeeperBreed) adjustedCP = baseCP * 0.85; // ~15% reduction, mid-range of Merck's cited 10-20%
+  const workBump = { maintenance:0, light:1, moderate:2, heavy:3 }[workLevel] || 0; // rough, see caveat below
+  adjustedCP += workBump;
+  return {
+    targetCP: +adjustedCP.toFixed(1),
+    stage, workLevel, growing,
+    breedAdjusted: growing && isEasyKeeperBreed,
+  };
+}
+function estimateActualCPPercent(hd, snap){
+  // Rough whole-diet CP% estimate: forage (typical published hay values, NOT lab-analyzed) + tracked supplement CP,
+  // against total estimated feed weight. This is a directional estimate, not a precision figure.
+  const TYPICAL_HAY_CP = { 'grass hay':9, 'grass':9, 'alfalfa':19, 'mixed':14 }; // % CP, typical published ranges
+  const FLAKE_LB = 4; // rough average flake weight - real flakes vary a lot by hay type/density
+  let forageLb = 0, forageCPg = 0;
+  (hd.forage?.hayEntries||[]).forEach(he=>{
+    const lb = he.unit==='flake' ? (he.qty||0)*FLAKE_LB : (he.qty||0);
+    const typeKey = Object.keys(TYPICAL_HAY_CP).find(k=>(he.type||'').toLowerCase().includes(k)) || 'grass hay';
+    forageLb += lb;
+    forageCPg += lb*453.6*(TYPICAL_HAY_CP[typeKey]/100);
+  });
+  (hd.forage?.measuredItems||[]).forEach(m=>{ if(m.unit==='lb'){ forageLb += m.amt; forageCPg += m.amt*453.6*0.12; } }); // beet pulp/pellets ~12% CP typical
+  const concentrateLb = [...(hd.feedingPlan.AM||[]), ...(hd.feedingPlan.PM||[])].filter(i=>i.unit==='lb').reduce((s,i)=>s+i.amt,0);
+  const totalLb = forageLb + concentrateLb;
+  const totalCPg = forageCPg + snap.totals.cp; // snap.totals.cp is already grams, supplement-tracked
+  if(totalLb<=0) return null;
+  return { actualCP: +(totalCPg/(totalLb*453.6)*100).toFixed(1), forageLb, concentrateLb };
+}
+function computeNutritionAlerts(snap, hd, h){
   const alerts = [];
+  if(snap.weightInfo){
+    if(snap.weightInfo.source==='default') alerts.push({level:'caution', text:`No weight on file — the Vitamin E/Selenium percentages below assume a generic 1100lb horse. Log an actual weight in Care → Medical for accurate numbers.`});
+    else if(snap.weightInfo.source==='tape-estimate') alerts.push({level:'info', text:`Vitamin E/Selenium percentages use a weight-tape estimate (${snap.weightInfo.weight}lb, logged ${fmtDate(snap.weightInfo.date)}), not a scale reading — treat as directional.`});
+  }
   ['vitE','se'].forEach(key=>{
     const val = snap.totals[key];
     const limit = snap.limits[key].limit;
@@ -2281,12 +2566,21 @@ function computeNutritionAlerts(snap){
   if(snap.caPStatus==='low') alerts.push({level:'warn', text:`Ca:P ratio is ${snap.caPRatio.toFixed(2)}:1 — low relative to the typical 1.2–2:1 target. Worth a vet check, especially for a growing horse.`});
   if(snap.caPStatus==='high') alerts.push({level:'caution', text:`Ca:P ratio is ${snap.caPRatio.toFixed(2)}:1 — high relative to the typical 1.2–2:1 target.`});
   if(snap.untracked.length) alerts.push({level:'info', text:`Not tracked (no nutrient data on file): ${[...new Set(snap.untracked)].join(', ')}.`});
+  if(hd && h){
+    const target = computeMacroTarget(h, hd);
+    const actual = estimateActualCPPercent(hd, snap);
+    if(actual){
+      const gap = actual.actualCP - target.targetCP;
+      if(gap < -2) alerts.push({level:'warn', text:`Estimated protein intake (~${actual.actualCP}% of diet) looks meaningfully below the ~${target.targetCP}% target for a ${target.stage} — worth a closer look.`});
+      else if(gap > 4) alerts.push({level:'caution', text:`Estimated protein intake (~${actual.actualCP}% of diet) is running well above the ~${target.targetCP}% target for a ${target.stage} — not necessarily a problem, but worth knowing.`});
+    }
+  }
   if(alerts.length===0) alerts.push({level:'ok', text:'No alerts — current supplement totals look within typical ranges.'});
   return alerts;
 }
 function renderNutritionSnapshot(hd, h){
   const snap = computeNutritionSnapshot(hd, h);
-  const alerts = computeNutritionAlerts(snap);
+  const alerts = computeNutritionAlerts(snap, hd, h);
   const alertColor = {warn:'#8C2F2F', caution:'#e2a15a', info:'var(--ink)', ok:'var(--sage)'};
   const alertIcon = {warn:'⚠️', caution:'⚠', info:'ℹ️', ok:'✓'};
   function bar(label, key, unit){
@@ -2326,8 +2620,22 @@ function renderNutritionSnapshot(hd, h){
   const caPLabel = snap.caPRatio ? `Ca:P ratio ${snap.caPRatio.toFixed(2)}:1` : 'Ca:P ratio — insufficient data';
   const breakdownKey = 'nutrition-'+h.id;
   const breakdownOpen = !!EXPANDED_YEARS[breakdownKey];
+  const macroTarget = computeMacroTarget(h, hd);
+  const macroActual = estimateActualCPPercent(hd, snap);
   return `
     <div class="card">
+      <div class="section-label" style="margin:0 0 8px; font-size:10px;">— Protein Target —</div>
+      <div class="row"><div class="name" style="font-size:12.5px;">Target (~${macroTarget.stage}, ${macroTarget.workLevel} work)</div><div class="sub" style="font-family:'JetBrains Mono',monospace;">~${macroTarget.targetCP}% CP</div></div>
+      <div class="row" style="margin-top:4px;"><div class="name" style="font-size:12.5px;">Estimated Actual</div><div class="sub" style="font-family:'JetBrains Mono',monospace;">${macroActual ? '~'+macroActual.actualCP+'% CP' : 'Need forage entered to estimate'}</div></div>
+      ${macroTarget.breedAdjusted ? `<div class="sub" style="margin-top:6px; font-size:10.5px;">Target reduced ~15% for growth — warmblood/easy-keeper breeds typically need less than standard growth-stage figures to avoid over-conditioning.</div>` : ''}
+      <div class="sub" style="margin-top:8px; font-size:10px; opacity:.8; line-height:1.5;">
+        Age-stage protein targets and the breed adjustment: <a href="${NRC_CITATIONS.merck}" target="_blank" style="color:var(--brass);">Merck Veterinary Manual — Nutritional Requirements of Horses</a>.
+        Work-level adjustment is a rough directional estimate (NRC's own work-intensity guidance is expressed mainly in energy terms, not protein %) — see <a href="${NRC_CITATIONS.ker}" target="_blank" style="color:var(--brass);">Kentucky Equine Research</a>.
+        ${macroActual ? `Forage protein is estimated from typical published hay values (grass ~9%, alfalfa ~19%), not a lab analysis of your actual hay — see <a href="${NRC_CITATIONS.msstate}" target="_blank" style="color:var(--brass);">MSU Extension</a>.` : ''}
+        Location and season aren't factored into this number — they mainly affect calorie needs, which this app doesn't currently estimate.
+      </div>
+    </div>
+    <div class="card" style="margin-top:10px;">
       ${alerts.map(a=>`<div class="row" style="margin-bottom:8px; align-items:flex-start;"><div style="width:20px;">${alertIcon[a.level]}</div><div class="sub" style="color:${alertColor[a.level]}; flex:1;">${a.text}</div></div>`).join('')}
       <div class="btn-row" style="margin-top:4px;">
         <button class="btn-sm" id="analyzeAiBtn">🤖 Analyze Feed Plan</button>
@@ -2356,13 +2664,16 @@ async function generateFeedAnalysis(horseId){
   const h = STATE.horses.find(x=>x.id===horseId);
   const hd = STATE.horseData[horseId];
   const snap = computeNutritionSnapshot(hd, h);
-  const sys = `You are an experienced equine nutritionist reviewing a horse's current supplement/concentrate feeding plan. You'll be given the horse's context and computed nutrient totals (supplements/concentrates only — forage is intentionally excluded, mention this limitation naturally if relevant). Respond in plain, direct language, 3-5 short sentences, no markdown headers. Note anything that stands out (redundant ingredients, real gaps, ratios worth a vet's attention) but stay appropriately cautious — you are not a substitute for a vet or equine nutritionist, and should say so if you flag something that needs their review.`;
+  const macroTarget = computeMacroTarget(h, hd);
+  const macroActual = estimateActualCPPercent(hd, snap);
+  const sys = `You are an experienced equine nutritionist reviewing a horse's current supplement/concentrate feeding plan. You'll be given the horse's context, computed nutrient totals (supplements/concentrates only — forage is intentionally excluded from those totals, mention this limitation naturally if relevant), and a separate rough protein-target estimate that DOES include forage. Respond in plain, direct language, 3-5 short sentences, no markdown headers. Note anything that stands out (redundant ingredients, real gaps, ratios worth a vet's attention) but stay appropriately cautious — you are not a substitute for a vet or equine nutritionist, and should say so if you flag something that needs their review. If you reference the protein target, mention it's an NRC-adapted estimate (Merck Veterinary Manual / Kentucky Equine Research), not a lab analysis of this horse's actual ration, so anyone reading it (including a trainer) understands the basis for the claim.`;
   const userText = `Horse: ${h.name} (${horseSubhead(h)})
 Vet context: allergies: ${h.vetContext.allergies||'none'}; conditions: ${h.vetContext.conditions||'none'}
 Current supplements/concentrates:
 ${snap.perItem.map(it=>`- ${it.name}: ${it.amt} ${it.unit}/day`).join('\n')||'(none)'}
 Computed daily totals (supplements only): Vitamin E ${snap.totals.vitE.toFixed(0)} IU (limit ~${snap.limits.vitE.limit.toFixed(0)}), Selenium ${snap.totals.se.toFixed(2)}mg (limit ~${snap.limits.se.limit.toFixed(2)}), Zinc ${snap.totals.zn.toFixed(0)}mg, Copper ${snap.totals.cu.toFixed(0)}mg, Magnesium ${snap.totals.mg.toFixed(0)}mg, Calcium ${(snap.totals.ca/1000).toFixed(1)}g, Phosphorus ${(snap.totals.p/1000).toFixed(1)}g${snap.caPRatio?` (Ca:P ${snap.caPRatio.toFixed(2)}:1)`:''}, Crude Protein ${snap.totals.cp.toFixed(0)}g, Crude Fat ${snap.totals.fat.toFixed(0)}g.
-Untracked items (no nutrient data on file): ${snap.untracked.join(', ')||'none'}`;
+Untracked items (no nutrient data on file): ${snap.untracked.join(', ')||'none'}
+Protein target estimate (age/breed/work-adjusted, NRC-based, includes rough forage estimate): target ~${macroTarget.targetCP}% CP for a ${macroTarget.stage} in ${macroTarget.workLevel} work${macroActual?`, estimated actual ~${macroActual.actualCP}% CP`:', insufficient forage data to estimate actual'}.`;
   const data = await callClaude({ model:'claude-sonnet-4-6', max_tokens:500, system: sys, messages:[{role:'user', content:[{type:'text', text:userText}]}] });
   return (data.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('\n');
 }
@@ -2465,22 +2776,26 @@ function openAddSupplement(horseId){
       const amt = parseFloat(document.getElementById('as-amt').value)||0;
       const timing = document.getElementById('as-timing').value;
       const warnings = checkNewSupplementSafety(hd, h, name, amt);
+      function addToPending(){
+        const base = hd.pendingFeedingPlan || { AM:[...hd.feedingPlan.AM], PM:[...hd.feedingPlan.PM] };
+        const timings = timing==='Both'?['AM','PM']:[timing];
+        timings.forEach(tm=>{ base[tm]=base[tm]||[]; base[tm].push({name, amt: timing==='Both'?+(amt/2).toFixed(2):amt, unit:nutData.unit}); });
+        hd.pendingFeedingPlan = base;
+      }
       if(warnings){
         document.getElementById('as-warning').innerHTML = `<div class="banner" style="background:#8C2F2F;">
           ${warnings.map(w=>`⚠ ${w.nutrient}: adding this would bring ${h.name} to ${w.newTotal}${w.unit.replace('/day','')} of ${w.limit}${w.unit.replace('/day','')}/day limit${w.overLimit?' — OVER the safe limit':''}`).join('<br>')}
-          <div style="margin-top:8px;"><button class="btn-sm" id="as-confirm-anyway">Add Anyway</button> <button class="btn-sm" id="as-cancel-add">Don't Add to Plan</button></div>
+          <div style="margin-top:8px;"><button class="btn-sm" id="as-confirm-anyway">Add as Pending Anyway</button> <button class="btn-sm" id="as-cancel-add">Don't Add to Plan</button></div>
         </div>`;
         document.getElementById('as-confirm-anyway').addEventListener('click', async ()=>{
-          const timings = timing==='Both'?['AM','PM']:[timing];
-          timings.forEach(tm=>{ hd.feedingPlan[tm]=hd.feedingPlan[tm]||[]; hd.feedingPlan[tm].push({name, amt: timing==='Both'?+(amt/2).toFixed(2):amt, unit:nutData.unit}); });
+          addToPending();
           await sSet('horse-data:'+horseId, hd);
           closeModal(); renderScreen();
         });
         document.getElementById('as-cancel-add').addEventListener('click', ()=>{ closeModal(); renderScreen(); });
         return;
       } else {
-        const timings = timing==='Both'?['AM','PM']:[timing];
-        timings.forEach(tm=>{ hd.feedingPlan[tm]=hd.feedingPlan[tm]||[]; hd.feedingPlan[tm].push({name, amt: timing==='Both'?+(amt/2).toFixed(2):amt, unit:nutData.unit}); });
+        addToPending();
         await sSet('horse-data:'+horseId, hd);
       }
     }
@@ -2618,6 +2933,7 @@ function openEditVetContext(id){
 }
 function openEditFeedingPlan(id){
   const hd = STATE.horseData[id];
+  const editing = hd.pendingFeedingPlan || hd.feedingPlan; // continue editing a pending draft if one exists
   const rowHtml = (list,timing)=> (list||[]).filter(it=>!it.transitionId).map((it,idx)=>{
     const isKnown = getSupplementLibrary().some(s=>s.key===it.name.trim().toLowerCase());
     return `
@@ -2637,14 +2953,16 @@ function openEditFeedingPlan(id){
   showModal(`
     <h3>Edit Feeding Plan</h3>
     <div class="sub" style="margin-bottom:8px;">Pick from your Supplement Library where you can — that's what keeps the Nutrition Snapshot accurate. Use "Not Listed" only for something genuinely new.</div>
-    <label>AM Items</label><div id="fp-am">${rowHtml(hd.feedingPlan.AM,'AM')}</div>
+    <div class="sub" style="margin-bottom:8px; padding:8px; background:var(--paper); border-radius:6px;">Changes here are saved as <strong>pending</strong> — they won't affect Prep Bags or the Nutrition Snapshot until you review and apply them from the Feed page. This keeps bags already portioned at the barn from silently going out of sync.</div>
+    <label>AM Items</label><div id="fp-am">${rowHtml(editing.AM,'AM')}</div>
     ${lockedHtml(hd.feedingPlan.AM)}
     <button class="btn-sm" id="fp-add-am">+ Add AM Item</button>
-    <label>PM Items</label><div id="fp-pm">${rowHtml(hd.feedingPlan.PM,'PM')}</div>
+    <label>PM Items</label><div id="fp-pm">${rowHtml(editing.PM,'PM')}</div>
     ${lockedHtml(hd.feedingPlan.PM)}
     <button class="btn-sm" id="fp-add-pm">+ Add PM Item</button>
-    <div class="btn-row"><button class="btn btn-primary" id="fp-save">Save Feeding Plan</button></div>
+    <div class="btn-row"><button class="btn btn-primary" id="fp-save">Save as Pending</button></div>
     <div class="section-label" style="margin-top:16px;">— Ramping an amount up or down over time? —</div>
+    <div class="sub" style="margin-bottom:6px;">Ramps apply directly to the active plan, bypassing staging — they're already a controlled, scheduled process.</div>
     <div class="btn-row"><button class="btn-sm" id="fp-start-ramp">Start a Ramp / Transition</button></div>
   `);
   function wireRow(row){
@@ -2686,10 +3004,14 @@ function openEditFeedingPlan(id){
       });
       return out;
     }
+    // Locked (transition-controlled) items always mirror the active plan's current ramp state,
+    // not whatever was showing when this modal opened.
     const lockedAM = (hd.feedingPlan.AM||[]).filter(it=>it.transitionId);
     const lockedPM = (hd.feedingPlan.PM||[]).filter(it=>it.transitionId);
-    hd.feedingPlan.AM = [...readList('fp-am'), ...lockedAM];
-    hd.feedingPlan.PM = [...readList('fp-pm'), ...lockedPM];
+    hd.pendingFeedingPlan = {
+      AM: [...readList('fp-am'), ...lockedAM],
+      PM: [...readList('fp-pm'), ...lockedPM]
+    };
     await sSet('horse-data:'+id, hd);
     closeModal(); renderScreen();
   });
@@ -2716,16 +3038,49 @@ function openAddMed(id){
 }
 function openAddBcs(id){
   const hd = STATE.horseData[id];
+  const h = STATE.horses.find(x=>x.id===id);
+  const isEasyKeeperBreed = /oldenburg|warmblood|gov\b|hanoverian|holsteiner|dutch|friesian|draft|pony|quarter/i.test(h.breed||'');
+  const ageYears = h.birthDate ? (Date.now() - new Date(h.birthDate)) / (365.25*86400000) : null;
+  const isGrowing = ageYears!==null && ageYears<4;
   showModal(`
     <h3>Log BCS & Weight</h3>
     <label>Date</label><input type="date" id="bcs-date" value="${todayStr()}">
     <div class="field-row"><div><label>BCS (1-9)</label><input type="number" inputmode="decimal" step="0.5" min="1" max="9" id="bcs-score"></div><div><label>Weight (lb)</label><input type="number" inputmode="decimal" id="bcs-weight"></div></div>
-    <label>Notes</label><textarea id="bcs-notes"></textarea>
+    <div class="sub" id="bcs-source-label" style="margin-top:-4px;">Weight source: <strong id="bcs-source-text">manual entry</strong></div>
+    <button class="btn-sm" id="bcs-toggle-tape" style="margin-top:6px;">No scale? Estimate from a weight tape</button>
+    <div id="bcs-tape-calc" style="display:none; margin-top:8px; padding:10px; background:var(--paper); border-radius:6px;">
+      ${isEasyKeeperBreed || isGrowing ? `<div class="sub" style="color:#8C2F2F; margin-bottom:8px;">⚠ ${h.name} is ${isEasyKeeperBreed?'a warmblood-type breed':''}${isEasyKeeperBreed&&isGrowing?' and ':''}${isGrowing?'still growing':''} — this formula is specifically flagged as less reliable for that combination (University of Tennessee Extension). Treat this as a rough placeholder until you can get an actual scale reading.</div>` : ''}
+      <label>Heart Girth (inches)</label><input type="number" inputmode="decimal" id="bcs-girth" placeholder="Measured just behind the front legs/elbow">
+      <label>Body Length (inches)</label><input type="number" inputmode="decimal" id="bcs-length" placeholder="Point of shoulder to point of buttock">
+      <div class="btn-row"><button class="btn-sm" id="bcs-calc-tape">Calculate Estimate</button></div>
+      <div id="bcs-tape-result" class="sub" style="margin-top:6px;"></div>
+      <div class="sub" style="margin-top:6px; font-size:9.5px; opacity:.75;">Formula: (girth² × length) ÷ 330. Source: <a href="https://utia.tennessee.edu/publications/wp-content/uploads/sites/269/2023/10/SP795.pdf" target="_blank" style="color:var(--brass);">UT Extension SP795</a>.</div>
+    </div>
+    <label style="margin-top:10px;">Notes</label><textarea id="bcs-notes"></textarea>
     <div class="btn-row"><button class="btn btn-primary" id="bcs-save">Save Entry</button></div>
   `);
+  let weightSource = 'measured';
+  document.getElementById('bcs-toggle-tape').addEventListener('click', ()=>{
+    const el = document.getElementById('bcs-tape-calc');
+    el.style.display = el.style.display==='none' ? 'block' : 'none';
+  });
+  document.getElementById('bcs-weight').addEventListener('input', ()=>{
+    weightSource = 'measured';
+    document.getElementById('bcs-source-text').textContent = 'manual entry';
+  });
+  document.getElementById('bcs-calc-tape').addEventListener('click', ()=>{
+    const girth = parseFloat(document.getElementById('bcs-girth').value)||0;
+    const length = parseFloat(document.getElementById('bcs-length').value)||0;
+    if(!girth || !length){ document.getElementById('bcs-tape-result').textContent = 'Enter both measurements.'; return; }
+    const est = Math.round((girth*girth*length)/330);
+    document.getElementById('bcs-tape-result').textContent = `Estimated weight: ~${est} lb`;
+    document.getElementById('bcs-weight').value = est;
+    weightSource = 'tape-estimate';
+    document.getElementById('bcs-source-text').textContent = 'weight-tape estimate';
+  });
   document.getElementById('bcs-save').addEventListener('click', async ()=>{
     hd.bcsLog = hd.bcsLog || [];
-    hd.bcsLog.push({ date:document.getElementById('bcs-date').value||todayStr(), score:parseFloat(document.getElementById('bcs-score').value)||0, weight:parseFloat(document.getElementById('bcs-weight').value)||0, notes:document.getElementById('bcs-notes').value.trim() });
+    hd.bcsLog.push({ date:document.getElementById('bcs-date').value||todayStr(), score:parseFloat(document.getElementById('bcs-score').value)||0, weight:parseFloat(document.getElementById('bcs-weight').value)||0, weightSource, notes:document.getElementById('bcs-notes').value.trim() });
     hd.bcsLog.sort((a,b)=>a.date.localeCompare(b.date));
     await sSet('horse-data:'+id, hd);
     closeModal(); renderScreen();
@@ -3172,6 +3527,7 @@ function renderReportsOverview(){
           ${roleBlock('Vet','vet', r.vetQuestions)}
           ${roleBlock('Farrier','farrier', r.farrierQuestions)}
           ${roleBlock('Bodywork','bodywork', r.bodyworkQuestions)}
+          <div class="btn-row" style="margin-top:14px;"><button class="btn-sm" data-delete-report="${r.id}" data-delete-report-horse="${r.horseId}" style="color:#8C2F2F;">Delete Report...</button></div>
         ` : `<div class="report-body" style="opacity:.75;">${(r.assessment||'').slice(0,140)}${(r.assessment||'').length>140?'…':''}</div>`}
       </div>
     `;}).join('') : '<div class="empty">No reports generated yet.</div>'}
@@ -3197,6 +3553,23 @@ function attachReportsOverviewHandlers(){
     const key = b.dataset.reportToggle;
     EXPANDED_YEARS[key] = !EXPANDED_YEARS[key];
     renderScreen();
+  }));
+  document.querySelectorAll('[data-delete-report]').forEach(b=>b.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    const reportId = b.dataset.deleteReport;
+    const horseId = b.dataset.deleteReportHorse;
+    showModal(`
+      <h3 style="color:#8C2F2F;">Delete this report?</h3>
+      <div class="sub" style="margin-bottom:10px;">This can't be undone. Photos already saved to the Photo Timeline are not affected.</div>
+      <div class="btn-row"><button class="btn-sm" id="cancel-report-delete">Cancel</button><button class="btn btn-primary" id="confirm-report-delete" style="background:#8C2F2F;">Delete</button></div>
+    `);
+    document.getElementById('cancel-report-delete').addEventListener('click', ()=>{ closeModal(); renderScreen(); });
+    document.getElementById('confirm-report-delete').addEventListener('click', async ()=>{
+      const hd = STATE.horseData[horseId];
+      hd.aiReports = (hd.aiReports||[]).filter(r=>r.id!==reportId);
+      await sSet('horse-data:'+horseId, hd);
+      closeModal(); renderScreen();
+    });
   }));
   document.getElementById('rep-add-photo').addEventListener('click', ()=>input.click());
   input.addEventListener('change', async ()=>{
@@ -3387,6 +3760,21 @@ function attachRespondHandlers(){
 }
 
 /* ============================= SETTINGS TAB ============================= */
+function computeStorageUsage(){
+  let bytes = 0;
+  for(let i=0;i<localStorage.length;i++){
+    const k = localStorage.key(i);
+    if(k && k.startsWith(LS_PREFIX)){
+      bytes += (k.length + (localStorage.getItem(k)||'').length) * 2; // rough UTF-16 byte estimate
+    }
+  }
+  return bytes;
+}
+function fmtBytes(bytes){
+  if(bytes < 1024) return bytes + ' B';
+  if(bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/1024/1024).toFixed(2) + ' MB';
+}
 function renderSettings(){
   const c = STATE.contacts;
   function contactCard(role){
@@ -3413,6 +3801,12 @@ function renderSettings(){
       <input type="text" id="apiKeyInput" placeholder="sk-ant-..." value="">
       <div class="btn-row"><button class="btn btn-primary" id="saveApiKeyBtn">Save Key</button></div>
       <div class="sub" style="margin-top:8px;">Get a key at <strong>console.anthropic.com</strong> → API Keys → Create Key.</div>
+      <div class="sub" style="margin-top:10px; padding-top:10px; border-top:1px solid var(--paper);">AI calls this month (${STATE.aiUsage.month}): <strong>${STATE.aiUsage.count}</strong></div>
+    </div>
+
+    <div class="section-label">— Storage —</div>
+    <div class="card">
+      <div class="sub">Using approximately <strong>${fmtBytes(computeStorageUsage())}</strong> on this device. Browsers typically allow several MB per site before running low — mostly photos and report thumbnails add up over time. If you ever get a storage warning, deleting old photos/reports (Reports tab, Care → Training) or downloading a backup and starting fresh (Settings → Restore to Defaults) will free it up.</div>
     </div>
 
     <div class="section-label">— Backup & Restore —</div>
