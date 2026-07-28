@@ -119,6 +119,23 @@
   .bags-chip.critical{background:var(--red); color:#fff; animation:pulse 1.6s ease-in-out infinite;}
   .bags-chip.ok{background:rgba(246,243,234,.12); color:var(--chalk);}
   @keyframes pulse{0%,100%{opacity:1;} 50%{opacity:.6;}}
+  /* Print-only report export — hides the live app, shows only #print-report.
+     No external PDF library needed: the browser's own print dialog (and on iOS,
+     the share icon inside it) handles "Save as PDF" / email / Save to Files. */
+  #print-report{ display:none; }
+  @media print{
+    body *{ visibility:hidden; }
+    #print-report, #print-report *{ visibility:visible; }
+    #print-report{ display:block; position:absolute; top:0; left:0; width:100%; padding:24px; font-family:'Archivo',sans-serif; color:#1a1a1a; }
+    #print-report h1{ font-family:'Roboto Slab',serif; font-size:22px; margin:0 0 2px; }
+    #print-report .pr-sub{ font-family:'JetBrains Mono',monospace; font-size:11px; color:#555; margin-bottom:16px; }
+    #print-report .pr-photos{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+    #print-report .pr-photos img{ width:140px; height:auto; border-radius:4px; object-fit:cover; }
+    #print-report h2{ font-family:'Roboto Slab',serif; font-size:14px; color:#3D5A42; border-bottom:1px solid #ccc; padding-bottom:4px; margin:18px 0 6px; }
+    #print-report p{ font-size:12.5px; line-height:1.5; margin:0 0 8px; }
+    #print-report ul{ margin:0 0 8px; padding-left:18px; font-size:12.5px; line-height:1.5; }
+    #print-report .pr-footer{ margin-top:24px; font-size:9.5px; color:#888; }
+  }
 </style>
 </head>
 <body>
@@ -153,6 +170,85 @@ async function sSet(key, val){
     return false;
   }
 }
+/* ============================= INDEXEDDB PHOTO STORE ============================= */
+/* Photos live here, not in localStorage — localStorage caps around 5-10MB and photos blow
+   through that fast. IndexedDB comfortably holds hundreds of MB. Every photo is stored exactly
+   once, keyed by id; Photo Timeline entries and AI Report entries both just reference that id,
+   so the same photo is never duplicated between a report and the timeline. */
+const IDB_NAME = 'stable_photos';
+const IDB_STORE = 'photos';
+let _idbPromise = null;
+function idbOpen(){
+  if(_idbPromise) return _idbPromise;
+  _idbPromise = new Promise((resolve,reject)=>{
+    if(!window.indexedDB){ reject(new Error('IndexedDB not supported')); return; }
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = ()=>{
+      const db = req.result;
+      if(!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE, { keyPath:'id' });
+    };
+    req.onsuccess = ()=>resolve(req.result);
+    req.onerror = ()=>reject(req.error);
+  });
+  return _idbPromise;
+}
+async function idbPutPhoto(id, dataUrl, horseId){
+  const db = await idbOpen();
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put({ id, dataUrl, horseId });
+    tx.oncomplete = ()=>resolve(id);
+    tx.onerror = ()=>reject(tx.error);
+  });
+}
+async function idbDeletePhoto(id){
+  const db = await idbOpen();
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).delete(id);
+    tx.oncomplete = ()=>resolve(true);
+    tx.onerror = ()=>reject(tx.error);
+  });
+}
+async function idbGetAllPhotos(){
+  const db = await idbOpen();
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).getAll();
+    req.onsuccess = ()=>resolve(req.result||[]);
+    req.onerror = ()=>reject(req.error);
+  });
+}
+let PHOTO_CACHE = {}; // photoId -> dataUrl, hydrated from IndexedDB at boot so rendering stays synchronous
+async function hydratePhotoCache(){
+  try{
+    const all = await idbGetAllPhotos();
+    all.forEach(p=>{ PHOTO_CACHE[p.id] = p.dataUrl; });
+  }catch(e){ console.error('Photo cache hydration failed', e); }
+}
+async function savePhoto(dataUrl, horseId){
+  const id = uid();
+  await idbPutPhoto(id, dataUrl, horseId);
+  PHOTO_CACHE[id] = dataUrl;
+  return id;
+}
+function photoSrc(id){ return PHOTO_CACHE[id] || ''; }
+// Removes any IndexedDB photo for this horse no longer referenced by its Photo Timeline or AI Reports.
+async function cleanupOrphanedPhotos(horseId){
+  const hd = STATE.horseData[horseId];
+  if(!hd) return;
+  const referenced = new Set();
+  (hd.photoLog||[]).forEach(p=>{ if(p.photoId) referenced.add(p.photoId); });
+  (hd.aiReports||[]).forEach(r=>{ (r.photoIds||[]).forEach(id=>referenced.add(id)); });
+  const all = await idbGetAllPhotos();
+  for(const p of all){
+    if(p.horseId===horseId && !referenced.has(p.id)){
+      await idbDeletePhoto(p.id);
+      delete PHOTO_CACHE[p.id];
+    }
+  }
+}
+
 function unitOptions(selected){
   const units = ['lb','oz','g','kg','scoop','cup','tbsp','tsp','ml','dose','IU'];
   return units.map(u=>`<option value="${u}" ${u===selected?'selected':''}>${u}</option>`).join('');
@@ -689,6 +785,76 @@ async function runMigrations(){
     applied.push(MIG_ID_16);
     await sSet('migrations', applied);
   }
+
+  // Seventeenth pass: move photos out of localStorage and into IndexedDB, de-duplicating AI
+  // report photos against their matching Photo Timeline entries. Previously the exact same
+  // image was saved twice per report — a small thumbnail embedded in the report, and a
+  // full-quality copy in the timeline. This matches them back up by date/caption/order, keeps
+  // one resized copy per photo in IndexedDB, and points both the report and the timeline entry
+  // at that single copy. Also downsamples everything to the new single storage tier (~1000px)
+  // since a separate full-res tier no longer exists anywhere in the app.
+  const MIG_ID_17 = 'photos-to-indexeddb-dedup-2026-07';
+  if(!applied.includes(MIG_ID_17)){
+    for(const h of STATE.horses){
+      const hd = STATE.horseData[h.id];
+      if(!hd) continue;
+      let changed = false;
+      const claimedLogIds = new Set();
+
+      for(const r of (hd.aiReports||[])){
+        if(!r.photos || !r.photos.length) continue;
+        const candidates = (hd.photoLog||[]).filter(p=>!claimedLogIds.has(p.id) && p.date===r.date && p.caption==='AI Progress Report' && p.photo);
+        const matched = candidates.slice(0, r.photos.length);
+        const photoIds = [];
+        for(const logEntry of matched){
+          claimedLogIds.add(logEntry.id);
+          const resized = await recompressForStorage(logEntry.photo);
+          photoIds.push(await savePhoto(resized, h.id));
+          logEntry.photoId = photoIds[photoIds.length-1];
+          delete logEntry.photo;
+        }
+        // Fallback for any report whose matching timeline copies couldn't be found (edge case) —
+        // fall back to the report's own lower-res thumbnails rather than losing the images.
+        if(photoIds.length < r.photos.length){
+          for(const thumb of r.photos.slice(photoIds.length)){
+            photoIds.push(await savePhoto(thumb, h.id));
+          }
+        }
+        r.photoIds = photoIds;
+        delete r.photos;
+        changed = true;
+      }
+
+      // Any remaining timeline entries (manual additions, or reports that didn't match above)
+      // get migrated in place, resized to the new standard.
+      for(const logEntry of (hd.photoLog||[])){
+        if(logEntry.photo && !logEntry.photoId){
+          const resized = await recompressForStorage(logEntry.photo);
+          logEntry.photoId = await savePhoto(resized, h.id);
+          delete logEntry.photo;
+          changed = true;
+        }
+      }
+
+      if(changed) await sSet('horse-data:'+h.id, hd);
+    }
+    applied.push(MIG_ID_17);
+    await sSet('migrations', applied);
+  }
+
+  // Eighteenth pass: backfill ids on BCS log entries that predate per-entry edit/delete.
+  const MIG_ID_18 = 'bcs-log-ids-2026-07';
+  if(!applied.includes(MIG_ID_18)){
+    for(const h of STATE.horses){
+      const hd = STATE.horseData[h.id];
+      if(!hd || !hd.bcsLog) continue;
+      let changed = false;
+      hd.bcsLog.forEach(b=>{ if(!b.id){ b.id = uid(); changed = true; } });
+      if(changed) await sSet('horse-data:'+h.id, hd);
+    }
+    applied.push(MIG_ID_18);
+    await sSet('migrations', applied);
+  }
 }
 
 async function loadAll(){
@@ -980,8 +1146,13 @@ function dailyUsage(itemName){
 }
 
 /* ============================= PHOTO COMPRESSION ============================= */
-function recompressDataUrl(dataUrl, maxDim=220, quality=0.5){
-  // Shrinks an already-loaded data URL down to a small thumbnail for long-term storage.
+/* Single storage tier for every photo in the app — ~1000px longest side, quality 0.78.
+   No full-resolution copy is ever written to storage. This same compressed version is what's
+   sent to the AI for progress-report analysis, so there's no separate "analysis quality" vs
+   "storage quality" — 1000px is comfortably enough detail for the vision model to assess
+   posture, topline, and condition, while keeping files to roughly 100-200KB each. */
+function recompressForStorage(dataUrl, maxDim=1000, quality=0.78){
+  // Resizes an already-loaded data URL (used during migration of old photos).
   return new Promise((resolve,reject)=>{
     const img = new Image();
     img.onload = ()=>{
@@ -997,7 +1168,7 @@ function recompressDataUrl(dataUrl, maxDim=220, quality=0.5){
     img.src = dataUrl;
   });
 }
-function compressImage(file, maxDim=800, quality=0.72){
+function compressImage(file, maxDim=1000, quality=0.78){
   return new Promise((resolve,reject)=>{
     const reader = new FileReader();
     reader.onload = e=>{
@@ -1832,12 +2003,13 @@ function attachHorsesHandlers(){
   const rq = document.getElementById('qaRequest'); if(rq) rq.addEventListener('click', ()=>openRequestModal(STATE.horses[0]?.id));
   const goBackup = document.getElementById('goToBackup'); if(goBackup) goBackup.addEventListener('click', ()=>{ ACTIVE_TAB='settings'; render(); });
 }
-function openQuickCheckin(horseId){
+function openQuickCheckin(horseId, entryId){
   const h = STATE.horses.find(x=>x.id===horseId);
   const hd = STATE.horseData[horseId];
-  let sel = {energy:null, appetite:null, attitude:null};
+  const existing = entryId ? (hd.dailyCheckins||[]).find(c=>c.id===entryId) : null;
+  let sel = existing ? {energy:existing.energy, appetite:existing.appetite, attitude:existing.attitude} : {energy:null, appetite:null, attitude:null};
   showModal(`
-    <h3>Quick Check-In — ${h.name}</h3>
+    <h3>${existing?'Edit':'Quick'} Check-In — ${h.name}</h3>
     <label>Energy</label>
     <div class="btn-row" id="qc-energy">
       <button class="btn-sm qc-opt" data-field="energy" data-val="low">😴 Low</button>
@@ -1857,21 +2029,37 @@ function openQuickCheckin(horseId){
       <button class="btn-sm qc-opt" data-field="attitude" data-val="great">😄 Great</button>
     </div>
     <label>Note (optional)</label>
-    <input type="text" id="qc-note" placeholder="Anything worth flagging?">
-    <div class="btn-row"><button class="btn btn-primary" id="qc-save">Save Check-In</button></div>
+    <input type="text" id="qc-note" placeholder="Anything worth flagging?" value="${existing&&existing.note?existing.note:''}">
+    <div class="btn-row"><button class="btn btn-primary" id="qc-save">${existing?'Save Changes':'Save Check-In'}</button></div>
+    ${existing ? `<div class="btn-row"><button class="btn-sm" id="qc-delete" style="color:#8C2F2F;">Delete Check-In...</button></div>` : ''}
   `);
-  document.querySelectorAll('.qc-opt').forEach(b=>b.addEventListener('click', ()=>{
-    sel[b.dataset.field] = b.dataset.val;
-    document.querySelectorAll(`#qc-${b.dataset.field} .qc-opt`).forEach(x=>x.style.background='#fff');
-    b.style.background = 'var(--brass)';
-    b.style.color = '#fff';
-  }));
+  document.querySelectorAll('.qc-opt').forEach(b=>{
+    if(sel[b.dataset.field] === b.dataset.val){ b.style.background='var(--brass)'; b.style.color='#fff'; }
+    b.addEventListener('click', ()=>{
+      sel[b.dataset.field] = b.dataset.val;
+      document.querySelectorAll(`#qc-${b.dataset.field} .qc-opt`).forEach(x=>{ x.style.background='#fff'; x.style.color=''; });
+      b.style.background = 'var(--brass)';
+      b.style.color = '#fff';
+    });
+  });
   document.getElementById('qc-save').addEventListener('click', async ()=>{
     hd.dailyCheckins = hd.dailyCheckins || [];
-    hd.dailyCheckins.push({ id:uid(), date:todayStr(), energy:sel.energy||'normal', appetite:sel.appetite||'normal', attitude:sel.attitude||'normal', note:document.getElementById('qc-note').value.trim() });
+    if(existing){
+      existing.energy = sel.energy||'normal';
+      existing.appetite = sel.appetite||'normal';
+      existing.attitude = sel.attitude||'normal';
+      existing.note = document.getElementById('qc-note').value.trim();
+    } else {
+      hd.dailyCheckins.push({ id:uid(), date:todayStr(), energy:sel.energy||'normal', appetite:sel.appetite||'normal', attitude:sel.attitude||'normal', note:document.getElementById('qc-note').value.trim() });
+    }
     await sSet('horse-data:'+horseId, hd);
     closeModal(); renderScreen();
   });
+  const delBtn = document.getElementById('qc-delete');
+  if(delBtn) delBtn.addEventListener('click', ()=> confirmDeleteModal('check-in', async ()=>{
+    hd.dailyCheckins = (hd.dailyCheckins||[]).filter(c=>c.id!==entryId);
+    await sSet('horse-data:'+horseId, hd);
+  }));
 }
 
 function openAddHorseModal(){
@@ -1992,7 +2180,7 @@ function openEditProfile(id){
         todayEntry.weight = newWeight;
         todayEntry.weightSource = 'measured';
       } else {
-        hd.bcsLog.push({ date: today, score: lastScore, weight: newWeight, weightSource: 'measured', notes: '' });
+        hd.bcsLog.push({ id:uid(), date: today, score: lastScore, weight: newWeight, weightSource: 'measured', notes: '' });
         hd.bcsLog.sort((a,b)=>a.date.localeCompare(b.date));
       }
       await sSet('horse-data:'+id, hd);
@@ -2234,7 +2422,7 @@ function renderHorseCare(id){
       ${renderPhotoGallery(hd.photoLog, id)}
       <div class="section-label">— Training Notes — <span class="add-link" id="addTrainingNote">+ Add</span></div>
       ${(hd.trainingNotes||[]).length? hd.trainingNotes.slice().reverse().map(n=>`
-        <div class="timeline-item"><div class="timeline-date">${fmtDate(n.date)}</div><div class="timeline-author">${n.author}${n.source==='pasted-response'?' (pasted response)':''}</div><div class="timeline-content">${n.content}</div></div>
+        <div class="timeline-item" data-edit-training="${n.id}" style="cursor:pointer;"><div class="timeline-date">${fmtDate(n.date)}</div><div class="timeline-author">${n.author}${n.source==='pasted-response'?' (pasted response)':''}</div><div class="timeline-content">${n.content}</div></div>
       `).join('') : '<div class="empty">No training notes yet.</div>'}
     `;
   } else if(cat.key==='farrier' || cat.key==='bodywork'){
@@ -2247,7 +2435,7 @@ function renderHorseCare(id){
       </div>
       <div class="section-label">— ${cat.label} Records — <span class="add-link" id="addVetRecord">+ Add</span></div>
       ${catRecords.length ? catRecords.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(r=>`
-        <div class="timeline-item"><div class="timeline-date">${fmtDate(r.date)}</div><div class="timeline-content">${r.notes}</div></div>
+        <div class="timeline-item" data-edit-vet-record="${r.id}" style="cursor:pointer;"><div class="timeline-date">${fmtDate(r.date)}</div><div class="timeline-content">${r.notes}</div></div>
       `).join('') : '<div class="empty">No records yet.</div>'}
     `;
   } else if(cat.key==='medical'){
@@ -2312,15 +2500,20 @@ function attachHorseCareHandlers(id){
   const ewl = document.getElementById('editWorkLevel'); if(ewl) ewl.addEventListener('click', ()=>openEditWorkLevel(id));
   const qc = document.getElementById('quickCheckinDetail'); if(qc) qc.addEventListener('click', ()=>openQuickCheckin(id));
   const apl = document.getElementById('addPhotoLog'); if(apl) apl.addEventListener('click', ()=>openAddPhotoLog(id));
-  document.querySelectorAll('[data-gallery-photo]').forEach(img=>img.addEventListener('click', ()=>{
+  document.querySelectorAll('[data-day-group]').forEach(el=>el.addEventListener('click', ()=>{
+    const dayIds = el.dataset.dayIds.split(',').filter(Boolean);
     if(PHOTO_SELECT_MODE){
-      const pid = img.dataset.galleryId;
-      if(PHOTO_SELECTED.has(pid)) PHOTO_SELECTED.delete(pid); else PHOTO_SELECTED.add(pid);
+      const allSelected = dayIds.every(pid=>PHOTO_SELECTED.has(pid));
+      dayIds.forEach(pid=> allSelected ? PHOTO_SELECTED.delete(pid) : PHOTO_SELECTED.add(pid));
       renderScreen();
     } else {
-      openPhotoLightbox(img.dataset.galleryPhoto, img.dataset.galleryCaption, img.dataset.galleryId, img.dataset.galleryHorse);
+      openDayGallery(el.dataset.dayGroup, id);
     }
   }));
+  document.querySelectorAll('[data-edit-training]').forEach(el=>el.addEventListener('click', ()=>openAddTrainingNote(id, el.dataset.editTraining)));
+  document.querySelectorAll('[data-edit-vet-record]').forEach(el=>el.addEventListener('click', ()=>openAddVetRecord(id, el.dataset.editVetRecord)));
+  document.querySelectorAll('[data-edit-bcs]').forEach(el=>el.addEventListener('click', ()=>openAddBcs(id, el.dataset.editBcs)));
+  document.querySelectorAll('[data-edit-checkin]').forEach(el=>el.addEventListener('click', ()=>openQuickCheckin(id, el.dataset.editCheckin)));
   const pst = document.getElementById('photoSelectToggle');
   if(pst) pst.addEventListener('click', ()=>{
     PHOTO_SELECT_MODE = !PHOTO_SELECT_MODE;
@@ -2340,6 +2533,7 @@ function attachHorseCareHandlers(id){
       const hd = STATE.horseData[id];
       hd.photoLog = (hd.photoLog||[]).filter(p=>!PHOTO_SELECTED.has(p.id));
       await sSet('horse-data:'+id, hd);
+      await cleanupOrphanedPhotos(id);
       PHOTO_SELECT_MODE = false;
       PHOTO_SELECTED.clear();
       closeModal(); renderScreen();
@@ -2370,13 +2564,17 @@ function renderBcsChart(log){
     const y = h - pad - ((l.weight-min)/(max-min))*(h-pad*1.5);
     return `${x},${y}`;
   }).join(' ');
+  const recent = log.slice().reverse().slice(0,8);
   return `<div class="chart-wrap">
     <svg viewBox="0 0 ${w} ${h}" style="width:100%; height:110px;">
       <polyline points="${pts}" fill="none" stroke="#B5824A" stroke-width="2"/>
       ${log.map((l,i)=>{ const x = pad + (i/(Math.max(log.length-1,1)))*(w-pad*2); const y = h - pad - ((l.weight-min)/(max-min))*(h-pad*1.5); return `<circle cx="${x}" cy="${y}" r="3" fill="#1F2E23"/>`; }).join('')}
     </svg>
     <div class="sub">Latest: ${log[log.length-1].weight} lb · BCS ${log[log.length-1].score}/9 (${fmtDate(log[log.length-1].date)})</div>
-  </div>`;
+  </div>
+  ${recent.map(l=>`
+    <div class="timeline-item" data-edit-bcs="${l.id}" style="cursor:pointer;"><div class="timeline-date">${fmtDate(l.date)}</div><div class="timeline-content">${l.weight} lb · BCS ${l.score}/9${l.weightSource==='tape-estimate'?' (tape estimate)':''}${l.notes?' — '+l.notes:''}</div></div>
+  `).join('')}`;
 }
 
 function renderCheckinStrip(checkins){
@@ -2385,7 +2583,7 @@ function renderCheckinStrip(checkins){
   const sorted = checkins.slice().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,7);
   return `<div class="card">
     ${sorted.map(c=>`
-      <div class="row" style="margin-bottom:6px;">
+      <div class="row" data-edit-checkin="${c.id}" style="margin-bottom:6px; cursor:pointer;">
         <div class="sub" style="font-family:'JetBrains Mono',monospace;">${fmtDate(c.date)}</div>
         <div>${icons[c.energy]||''} ${icons[c.appetite]||''} ${icons[c.attitude]||''} ${c.note?'<span class="sub">— '+c.note+'</span>':''}</div>
       </div>
@@ -2414,7 +2612,7 @@ function renderVetRecordsByYear(vetRecords){
           <span class="year-chevron">${isOpen?'▾':'▸'}</span>
         </button>
         ${isOpen ? `<div class="year-body">${records.map(v=>`
-          <div class="timeline-item"><div class="timeline-date">${fmtDate(v.date)}</div><div class="timeline-author">${v.type.toUpperCase()}</div><div class="timeline-content">${v.notes}</div></div>
+          <div class="timeline-item" data-edit-vet-record="${v.id}" style="cursor:pointer;"><div class="timeline-date">${fmtDate(v.date)}</div><div class="timeline-author">${v.type.toUpperCase()}</div><div class="timeline-content">${v.notes}</div></div>
         `).join('')}</div>` : ''}
       </div>`;
   }).join('');
@@ -2423,20 +2621,44 @@ let PHOTO_SELECT_MODE = false;
 let PHOTO_SELECTED = new Set();
 function renderPhotoGallery(photoLog, horseId){
   if(!photoLog || photoLog.length===0) return '<div class="empty">No photos logged yet.</div>';
-  const sorted = photoLog.slice().sort((a,b)=>b.date.localeCompare(a.date));
+  const byDay = {};
+  photoLog.forEach(p=>{ (byDay[p.date] = byDay[p.date] || []).push(p); });
+  const days = Object.keys(byDay).sort((a,b)=>b.localeCompare(a));
   return `
     <div class="btn-row" style="margin-bottom:8px;">
       <button class="btn-sm" id="photoSelectToggle">${PHOTO_SELECT_MODE ? 'Cancel' : 'Select'}</button>
       ${PHOTO_SELECT_MODE && PHOTO_SELECTED.size ? `<button class="btn-sm" id="photoDeleteSelected" style="color:#8C2F2F;">Delete ${PHOTO_SELECTED.size} Selected</button>` : ''}
     </div>
     <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px;">
-    ${sorted.map(p=>`
-      <div data-gallery-photo="${p.photo}" data-gallery-caption="${fmtDate(p.date)}${p.caption?' — '+p.caption.replace(/"/g,'&quot;'):''}" data-gallery-id="${p.id}" data-gallery-horse="${horseId}" style="aspect-ratio:1; background-image:url(${p.photo}); background-size:cover; background-position:center; border-radius:4px; position:relative; cursor:pointer; border:1px solid var(--paper); ${PHOTO_SELECT_MODE && PHOTO_SELECTED.has(p.id) ? 'outline:3px solid var(--brass);' : ''}">
-        <div style="position:absolute; bottom:0; left:0; right:0; background:rgba(31,46,35,.75); color:#fff; font-family:'JetBrains Mono',monospace; font-size:8px; padding:2px 4px;">${fmtDate(p.date)}</div>
-        ${PHOTO_SELECT_MODE ? `<div style="position:absolute; top:4px; right:4px; width:18px; height:18px; border-radius:50%; background:${PHOTO_SELECTED.has(p.id)?'var(--brass)':'rgba(255,255,255,.6)'}; border:1px solid #fff;"></div>` : ''}
-      </div>
-    `).join('')}
+    ${days.map(date=>{
+      const dayPhotos = byDay[date];
+      const cover = dayPhotos[0];
+      const src = photoSrc(cover.photoId);
+      const dayIds = dayPhotos.map(p=>p.id);
+      const allSelected = PHOTO_SELECT_MODE && dayIds.length>0 && dayIds.every(id=>PHOTO_SELECTED.has(id));
+      return `
+      <div data-day-group="${date}" data-day-ids="${dayIds.join(',')}" style="aspect-ratio:1; background-image:url(${src}); background-size:cover; background-position:center; border-radius:4px; position:relative; cursor:pointer; border:1px solid var(--paper); ${allSelected ? 'outline:3px solid var(--brass);' : ''}">
+        <div style="position:absolute; bottom:0; left:0; right:0; background:rgba(31,46,35,.75); color:#fff; font-family:'JetBrains Mono',monospace; font-size:8px; padding:2px 4px;">${fmtDate(date)}</div>
+        ${dayPhotos.length>1 ? `<div style="position:absolute; top:4px; left:4px; background:rgba(31,46,35,.85); color:#fff; font-family:'JetBrains Mono',monospace; font-size:9px; padding:1px 5px; border-radius:8px;">${dayPhotos.length}</div>` : ''}
+        ${PHOTO_SELECT_MODE ? `<div style="position:absolute; top:4px; right:4px; width:18px; height:18px; border-radius:50%; background:${allSelected?'var(--brass)':'rgba(255,255,255,.6)'}; border:1px solid #fff;"></div>` : ''}
+      </div>`;
+    }).join('')}
     </div>`;
+}
+function openDayGallery(date, horseId){
+  const hd = STATE.horseData[horseId];
+  const dayPhotos = (hd.photoLog||[]).filter(p=>p.date===date);
+  showModal(`
+    <h3>${fmtDate(date)}</h3>
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px;">
+      ${dayPhotos.map(p=>`<div data-day-photo="${p.id}" style="aspect-ratio:1; background-image:url(${photoSrc(p.photoId)}); background-size:cover; background-position:center; border-radius:4px; cursor:pointer; border:1px solid var(--paper);"></div>`).join('')}
+    </div>
+  `);
+  document.querySelectorAll('[data-day-photo]').forEach(el=>el.addEventListener('click', ()=>{
+    const p = dayPhotos.find(x=>x.id===el.dataset.dayPhoto);
+    closeModal();
+    openPhotoLightbox(photoSrc(p.photoId), `${fmtDate(p.date)}${p.caption?' — '+p.caption:''}`, p.id, horseId);
+  }));
 }
 function openPhotoLightbox(photo, caption, photoId, horseId){
   showModal(`
@@ -2456,6 +2678,7 @@ function openPhotoLightbox(photo, caption, photoId, horseId){
       const hd = STATE.horseData[horseId];
       hd.photoLog = (hd.photoLog||[]).filter(p=>p.id!==photoId);
       await sSet('horse-data:'+horseId, hd);
+      await cleanupOrphanedPhotos(horseId);
       closeModal(); renderScreen();
     });
   });
@@ -2480,7 +2703,8 @@ function openAddPhotoLog(id){
   document.getElementById('apl-save').addEventListener('click', async ()=>{
     if(!photoData) return alert('Choose a photo first');
     hd.photoLog = hd.photoLog || [];
-    hd.photoLog.push({ id:uid(), date:document.getElementById('apl-date').value||todayStr(), photo:photoData, caption:document.getElementById('apl-caption').value.trim() });
+    const photoId = await savePhoto(photoData, id);
+    hd.photoLog.push({ id:uid(), date:document.getElementById('apl-date').value||todayStr(), photoId, caption:document.getElementById('apl-caption').value.trim() });
     await sSet('horse-data:'+id, hd);
     closeModal(); renderScreen();
   });
@@ -3036,17 +3260,18 @@ function openAddMed(id){
     closeModal(); renderScreen();
   });
 }
-function openAddBcs(id){
+function openAddBcs(id, entryId){
   const hd = STATE.horseData[id];
   const h = STATE.horses.find(x=>x.id===id);
+  const existing = entryId ? (hd.bcsLog||[]).find(b=>b.id===entryId) : null;
   const isEasyKeeperBreed = /oldenburg|warmblood|gov\b|hanoverian|holsteiner|dutch|friesian|draft|pony|quarter/i.test(h.breed||'');
   const ageYears = h.birthDate ? (Date.now() - new Date(h.birthDate)) / (365.25*86400000) : null;
   const isGrowing = ageYears!==null && ageYears<4;
   showModal(`
-    <h3>Log BCS & Weight</h3>
-    <label>Date</label><input type="date" id="bcs-date" value="${todayStr()}">
-    <div class="field-row"><div><label>BCS (1-9)</label><input type="number" inputmode="decimal" step="0.5" min="1" max="9" id="bcs-score"></div><div><label>Weight (lb)</label><input type="number" inputmode="decimal" id="bcs-weight"></div></div>
-    <div class="sub" id="bcs-source-label" style="margin-top:-4px;">Weight source: <strong id="bcs-source-text">manual entry</strong></div>
+    <h3>${existing?'Edit':'Log'} BCS & Weight</h3>
+    <label>Date</label><input type="date" id="bcs-date" value="${existing?existing.date:todayStr()}">
+    <div class="field-row"><div><label>BCS (1-9)</label><input type="number" inputmode="decimal" step="0.5" min="1" max="9" id="bcs-score" value="${existing?existing.score:''}"></div><div><label>Weight (lb)</label><input type="number" inputmode="decimal" id="bcs-weight" value="${existing?existing.weight:''}"></div></div>
+    <div class="sub" id="bcs-source-label" style="margin-top:-4px;">Weight source: <strong id="bcs-source-text">${existing&&existing.weightSource==='tape-estimate'?'weight-tape estimate':'manual entry'}</strong></div>
     <button class="btn-sm" id="bcs-toggle-tape" style="margin-top:6px;">No scale? Estimate from a weight tape</button>
     <div id="bcs-tape-calc" style="display:none; margin-top:8px; padding:10px; background:var(--paper); border-radius:6px;">
       ${isEasyKeeperBreed || isGrowing ? `<div class="sub" style="color:#8C2F2F; margin-bottom:8px;">⚠ ${h.name} is ${isEasyKeeperBreed?'a warmblood-type breed':''}${isEasyKeeperBreed&&isGrowing?' and ':''}${isGrowing?'still growing':''} — this formula is specifically flagged as less reliable for that combination (University of Tennessee Extension). Treat this as a rough placeholder until you can get an actual scale reading.</div>` : ''}
@@ -3056,10 +3281,11 @@ function openAddBcs(id){
       <div id="bcs-tape-result" class="sub" style="margin-top:6px;"></div>
       <div class="sub" style="margin-top:6px; font-size:9.5px; opacity:.75;">Formula: (girth² × length) ÷ 330. Source: <a href="https://utia.tennessee.edu/publications/wp-content/uploads/sites/269/2023/10/SP795.pdf" target="_blank" style="color:var(--brass);">UT Extension SP795</a>.</div>
     </div>
-    <label style="margin-top:10px;">Notes</label><textarea id="bcs-notes"></textarea>
-    <div class="btn-row"><button class="btn btn-primary" id="bcs-save">Save Entry</button></div>
+    <label style="margin-top:10px;">Notes</label><textarea id="bcs-notes">${existing?existing.notes||'':''}</textarea>
+    <div class="btn-row"><button class="btn btn-primary" id="bcs-save">${existing?'Save Changes':'Save Entry'}</button></div>
+    ${existing ? `<div class="btn-row"><button class="btn-sm" id="bcs-delete" style="color:#8C2F2F;">Delete Entry...</button></div>` : ''}
   `);
-  let weightSource = 'measured';
+  let weightSource = existing ? (existing.weightSource||'measured') : 'measured';
   document.getElementById('bcs-toggle-tape').addEventListener('click', ()=>{
     const el = document.getElementById('bcs-tape-calc');
     el.style.display = el.style.display==='none' ? 'block' : 'none';
@@ -3080,43 +3306,85 @@ function openAddBcs(id){
   });
   document.getElementById('bcs-save').addEventListener('click', async ()=>{
     hd.bcsLog = hd.bcsLog || [];
-    hd.bcsLog.push({ date:document.getElementById('bcs-date').value||todayStr(), score:parseFloat(document.getElementById('bcs-score').value)||0, weight:parseFloat(document.getElementById('bcs-weight').value)||0, weightSource, notes:document.getElementById('bcs-notes').value.trim() });
+    if(existing){
+      existing.date = document.getElementById('bcs-date').value||todayStr();
+      existing.score = parseFloat(document.getElementById('bcs-score').value)||0;
+      existing.weight = parseFloat(document.getElementById('bcs-weight').value)||0;
+      existing.weightSource = weightSource;
+      existing.notes = document.getElementById('bcs-notes').value.trim();
+    } else {
+      hd.bcsLog.push({ id:uid(), date:document.getElementById('bcs-date').value||todayStr(), score:parseFloat(document.getElementById('bcs-score').value)||0, weight:parseFloat(document.getElementById('bcs-weight').value)||0, weightSource, notes:document.getElementById('bcs-notes').value.trim() });
+    }
     hd.bcsLog.sort((a,b)=>a.date.localeCompare(b.date));
     await sSet('horse-data:'+id, hd);
     closeModal(); renderScreen();
   });
+  const delBtn = document.getElementById('bcs-delete');
+  if(delBtn) delBtn.addEventListener('click', ()=> confirmDeleteModal('BCS entry', async ()=>{
+    hd.bcsLog = (hd.bcsLog||[]).filter(b=>b.id!==entryId);
+    await sSet('horse-data:'+id, hd);
+  }));
 }
-function openAddVetRecord(id){
+function openAddVetRecord(id, entryId){
   const hd = STATE.horseData[id];
+  const existing = entryId ? (hd.vetRecords||[]).find(r=>r.id===entryId) : null;
   showModal(`
-    <h3>Add Vet / Farrier / Bodywork Record</h3>
+    <h3>${existing?'Edit':'Add'} Vet / Farrier / Bodywork Record</h3>
     <label>Type</label>
-    <select id="vr-type"><option value="vet">Vet</option><option value="farrier">Farrier</option><option value="bodywork">Bodywork</option></select>
-    <label>Date</label><input type="date" id="vr-date" value="${todayStr()}">
-    <label>Notes</label><textarea id="vr-notes"></textarea>
-    <div class="btn-row"><button class="btn btn-primary" id="vr-save">Save Record</button></div>
+    <select id="vr-type">
+      <option value="vet" ${existing&&existing.type==='vet'?'selected':''}>Vet</option>
+      <option value="farrier" ${existing&&existing.type==='farrier'?'selected':''}>Farrier</option>
+      <option value="bodywork" ${existing&&existing.type==='bodywork'?'selected':''}>Bodywork</option>
+    </select>
+    <label>Date</label><input type="date" id="vr-date" value="${existing?existing.date:todayStr()}">
+    <label>Notes</label><textarea id="vr-notes">${existing?existing.notes:''}</textarea>
+    <div class="btn-row"><button class="btn btn-primary" id="vr-save">${existing?'Save Changes':'Save Record'}</button></div>
+    ${existing ? `<div class="btn-row"><button class="btn-sm" id="vr-delete" style="color:#8C2F2F;">Delete Record...</button></div>` : ''}
   `);
   document.getElementById('vr-save').addEventListener('click', async ()=>{
     hd.vetRecords = hd.vetRecords || [];
-    hd.vetRecords.push({ id:uid(), type:document.getElementById('vr-type').value, date:document.getElementById('vr-date').value||todayStr(), notes:document.getElementById('vr-notes').value.trim() });
+    if(existing){
+      existing.type = document.getElementById('vr-type').value;
+      existing.date = document.getElementById('vr-date').value||todayStr();
+      existing.notes = document.getElementById('vr-notes').value.trim();
+    } else {
+      hd.vetRecords.push({ id:uid(), type:document.getElementById('vr-type').value, date:document.getElementById('vr-date').value||todayStr(), notes:document.getElementById('vr-notes').value.trim() });
+    }
     await sSet('horse-data:'+id, hd);
     closeModal(); renderScreen();
   });
+  const delBtn = document.getElementById('vr-delete');
+  if(delBtn) delBtn.addEventListener('click', ()=> confirmDeleteModal('record', async ()=>{
+    hd.vetRecords = (hd.vetRecords||[]).filter(r=>r.id!==entryId);
+    await sSet('horse-data:'+id, hd);
+  }));
 }
-function openAddTrainingNote(id){
+function openAddTrainingNote(id, entryId){
   const hd = STATE.horseData[id];
+  const existing = entryId ? (hd.trainingNotes||[]).find(n=>n.id===entryId) : null;
   showModal(`
-    <h3>Add Training Note</h3>
-    <label>Date</label><input type="date" id="tn-date" value="${todayStr()}">
-    <label>Note</label><textarea id="tn-content"></textarea>
-    <div class="btn-row"><button class="btn btn-primary" id="tn-save">Save Note</button></div>
+    <h3>${existing?'Edit':'Add'} Training Note</h3>
+    <label>Date</label><input type="date" id="tn-date" value="${existing?existing.date:todayStr()}">
+    <label>Note</label><textarea id="tn-content">${existing?existing.content:''}</textarea>
+    <div class="btn-row"><button class="btn btn-primary" id="tn-save">${existing?'Save Changes':'Save Note'}</button></div>
+    ${existing ? `<div class="btn-row"><button class="btn-sm" id="tn-delete" style="color:#8C2F2F;">Delete Note...</button></div>` : ''}
   `);
   document.getElementById('tn-save').addEventListener('click', async ()=>{
     hd.trainingNotes = hd.trainingNotes || [];
-    hd.trainingNotes.push({ id:uid(), date:document.getElementById('tn-date').value||todayStr(), author:'Lauren', content:document.getElementById('tn-content').value.trim(), source:'manual' });
+    if(existing){
+      existing.date = document.getElementById('tn-date').value||todayStr();
+      existing.content = document.getElementById('tn-content').value.trim();
+    } else {
+      hd.trainingNotes.push({ id:uid(), date:document.getElementById('tn-date').value||todayStr(), author:'Lauren', content:document.getElementById('tn-content').value.trim(), source:'manual' });
+    }
     await sSet('horse-data:'+id, hd);
     closeModal(); renderScreen();
   });
+  const delBtn = document.getElementById('tn-delete');
+  if(delBtn) delBtn.addEventListener('click', ()=> confirmDeleteModal('training note', async ()=>{
+    hd.trainingNotes = (hd.trainingNotes||[]).filter(n=>n.id!==entryId);
+    await sSet('horse-data:'+id, hd);
+  }));
 }
 
 function renderFeedRecipe(feedingPlan, transitions){
@@ -3496,7 +3764,7 @@ function renderReportsOverview(){
     </div>
     <div class="section-label">— Past Reports —</div>
     ${allReports.length? allReports.map((r, idx)=>{
-      const thumbs = r.photos || (r.photo ? [r.photo] : []);
+      const thumbs = (r.photoIds || []).map(pid=>photoSrc(pid)).filter(Boolean);
       const key = 'report-'+r.id;
       const isOpen = EXPANDED_YEARS[key] !== undefined ? EXPANDED_YEARS[key] : idx===0; // most recent open by default
       EXPANDED_YEARS[key] = isOpen; // lock in the default so the toggle handler always has an accurate current state
@@ -3508,11 +3776,14 @@ function renderReportsOverview(){
         </div>` : '';
       return `
       <div class="card">
-        <button class="row" data-report-toggle="${key}" style="width:100%; background:none; border:none; text-align:left; padding:0; cursor:pointer;">
-          <div class="report-title">${r.horseName}</div>
-          <div style="display:flex; align-items:center; gap:8px;"><div class="report-date">${fmtDate(r.date)}</div><span style="color:var(--brass);">${isOpen?'▾':'▸'}</span></div>
+        <button class="row" data-report-toggle="${key}" style="width:100%; background:none; border:none; text-align:left; padding:0; cursor:pointer; display:flex; align-items:center; gap:10px;">
+          ${!isOpen && thumbs.length ? `<div style="width:36px; height:36px; border-radius:6px; background-image:url(${thumbs[0]}); background-size:cover; background-position:center; flex-shrink:0;"></div>` : ''}
+          <div style="flex:1; display:flex; justify-content:space-between; align-items:center; min-width:0;">
+            <div class="report-title">${r.horseName}</div>
+            <div style="display:flex; align-items:center; gap:8px;"><div class="report-date">${fmtDate(r.date)}</div><span style="color:var(--brass);">${isOpen?'▾':'▸'}</span></div>
+          </div>
         </button>
-        ${thumbs.length ? `<div style="display:flex; gap:6px; margin:8px 0; flex-wrap:wrap;">${thumbs.slice(0, isOpen?thumbs.length:3).map(t=>`<div style="width:70px; height:93px; border-radius:6px; background-image:url(${t}); background-size:cover; background-position:center;"></div>`).join('')}</div>` : ''}
+        ${isOpen && thumbs.length ? `<div style="display:flex; gap:6px; margin:8px 0; flex-wrap:wrap;">${thumbs.map(t=>`<div style="width:70px; height:93px; border-radius:6px; background-image:url(${t}); background-size:cover; background-position:center;"></div>`).join('')}</div>` : ''}
         ${isOpen ? `
           <div class="report-body">${r.assessment}</div>
           ${r.changeSinceLast ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--paper);"><div class="name" style="font-size:12px; color:var(--sage);">WHAT'S CHANGED SINCE LAST TIME</div><div class="sub" style="margin-top:4px;">${r.changeSinceLast}</div></div>` : ''}
@@ -3527,7 +3798,7 @@ function renderReportsOverview(){
           ${roleBlock('Vet','vet', r.vetQuestions)}
           ${roleBlock('Farrier','farrier', r.farrierQuestions)}
           ${roleBlock('Bodywork','bodywork', r.bodyworkQuestions)}
-          <div class="btn-row" style="margin-top:14px;"><button class="btn-sm" data-delete-report="${r.id}" data-delete-report-horse="${r.horseId}" style="color:#8C2F2F;">Delete Report...</button></div>
+          <div class="btn-row" style="margin-top:14px;"><button class="btn-sm" data-export-report="${r.id}" data-export-report-horse="${r.horseId}">Export PDF</button><button class="btn-sm" data-delete-report="${r.id}" data-delete-report-horse="${r.horseId}" style="color:#8C2F2F;">Delete Report...</button></div>
         ` : `<div class="report-body" style="opacity:.75;">${(r.assessment||'').slice(0,140)}${(r.assessment||'').length>140?'…':''}</div>`}
       </div>
     `;}).join('') : '<div class="empty">No reports generated yet.</div>'}
@@ -3568,6 +3839,7 @@ function attachReportsOverviewHandlers(){
       const hd = STATE.horseData[horseId];
       hd.aiReports = (hd.aiReports||[]).filter(r=>r.id!==reportId);
       await sSet('horse-data:'+horseId, hd);
+      await cleanupOrphanedPhotos(horseId);
       closeModal(); renderScreen();
     });
   }));
@@ -3589,16 +3861,19 @@ function attachReportsOverviewHandlers(){
       const result = await generateAIReport(horseId, reportPhotos, notes);
       const hd = STATE.horseData[horseId];
       hd.aiReports = hd.aiReports || [];
-      // Store only small thumbnails long-term — full-res copies were only needed transiently for the AI call above.
-      const thumbnails = await Promise.all(reportPhotos.map(p=>recompressDataUrl(p, 220, 0.5)));
-      const report = { id:uid(), date: todayStr(), createdAt: new Date().toISOString(), photos: thumbnails, notes, assessment: result.assessment, changeSinceLast: result.changeSinceLast||null, nutritionNote: result.nutritionNote||null, trainerQuestions: result.trainerQuestions||[], vetQuestions: result.vetQuestions||[], farrierQuestions: result.farrierQuestions||[], bodyworkQuestions: result.bodyworkQuestions||[] };
+      // reportPhotos are already compressed to the single storage tier (~1000px) at selection
+      // time — the exact same version used for the AI analysis above. Save each one exactly
+      // once, then reference that same id from both the report and the Photo Timeline.
+      const photoIds = [];
+      for(const p of reportPhotos){ photoIds.push(await savePhoto(p, horseId)); }
+      const report = { id:uid(), date: todayStr(), createdAt: new Date().toISOString(), photoIds, notes, assessment: result.assessment, changeSinceLast: result.changeSinceLast||null, nutritionNote: result.nutritionNote||null, trainerQuestions: result.trainerQuestions||[], vetQuestions: result.vetQuestions||[], farrierQuestions: result.farrierQuestions||[], bodyworkQuestions: result.bodyworkQuestions||[] };
       hd.aiReports.push(report);
       // feed into training notes journal too
       hd.trainingNotes = hd.trainingNotes || [];
       hd.trainingNotes.push({ id:uid(), date: todayStr(), author:'AI Report', content: result.assessment, source:'ai-report' });
-      // feed full-quality photos into the visual timeline too, one entry per photo
+      // feed the same photos into the visual timeline too, one entry per photo, by reference
       hd.photoLog = hd.photoLog || [];
-      reportPhotos.forEach(p=>hd.photoLog.push({ id:uid(), date: todayStr(), photo: p, caption:'AI Progress Report' }));
+      photoIds.forEach(pid=>hd.photoLog.push({ id:uid(), date: todayStr(), photoId: pid, caption:'AI Progress Report' }));
       await sSet('horse-data:'+horseId, hd);
       renderScreen();
     }catch(err){
@@ -3607,6 +3882,42 @@ function attachReportsOverviewHandlers(){
     }
   });
   document.querySelectorAll('[data-mailto]').forEach(tag=>tag.addEventListener('click', ()=>openQuestionsShare(tag.dataset.horse, tag.dataset.report, tag.dataset.role)));
+  document.querySelectorAll('[data-export-report]').forEach(b=>b.addEventListener('click', ()=>exportReportToPDF(b.dataset.exportReport, b.dataset.exportReportHorse)));
+}
+function exportReportToPDF(reportId, horseId){
+  const hd = STATE.horseData[horseId];
+  const h = STATE.horses.find(x=>x.id===horseId);
+  const r = (hd.aiReports||[]).find(x=>x.id===reportId);
+  if(!r) return;
+  const photos = (r.photoIds||[]).map(pid=>photoSrc(pid)).filter(Boolean);
+  const roleSection = (label, questions)=> questions && questions.length ? `
+    <h2>For ${label}</h2>
+    <ul>${questions.map(q=>`<li>${q}</li>`).join('')}</ul>` : '';
+  const html = `
+    <h1>${h.name} — Progress Report</h1>
+    <div class="pr-sub">${fmtDate(r.date)}${h.registeredName?' · '+h.registeredName:''} · Generated by Stable</div>
+    ${photos.length ? `<div class="pr-photos">${photos.map(p=>`<img src="${p}">`).join('')}</div>` : ''}
+    <h2>Assessment</h2>
+    <p>${r.assessment||''}</p>
+    ${r.changeSinceLast ? `<h2>What's Changed Since Last Time</h2><p>${r.changeSinceLast}</p>` : ''}
+    ${r.nutritionNote ? `<h2>Nutrition Observation</h2><p>${r.nutritionNote}</p>` : ''}
+    ${roleSection('Trainer', r.trainerQuestions)}
+    ${roleSection('Vet', r.vetQuestions)}
+    ${roleSection('Farrier', r.farrierQuestions)}
+    ${roleSection('Bodywork', r.bodyworkQuestions)}
+    ${r.notes ? `<h2>Owner's Notes</h2><p>${r.notes}</p>` : ''}
+    <div class="pr-footer">Exported from Stable on ${fmtDate(todayStr())}</div>
+  `;
+  let container = document.getElementById('print-report');
+  if(!container){
+    container = document.createElement('div');
+    container.id = 'print-report';
+    document.body.appendChild(container);
+  }
+  container.innerHTML = html;
+  const cleanup = ()=>{ container.innerHTML = ''; window.removeEventListener('afterprint', cleanup); };
+  window.addEventListener('afterprint', cleanup);
+  window.print();
 }
 function openQuestionsShare(horseId, reportId, role){
   const hd = STATE.horseData[horseId];
@@ -3949,12 +4260,22 @@ function showModal(html){
   overlay.addEventListener('click', e=>{ if(e.target===overlay) closeModal(); });
 }
 function closeModal(){ const o = document.getElementById('modalOverlay'); if(o) o.remove(); }
+function confirmDeleteModal(label, onConfirm){
+  showModal(`
+    <h3 style="color:#8C2F2F;">Delete this ${label}?</h3>
+    <div class="sub" style="margin-bottom:10px;">This can't be undone.</div>
+    <div class="btn-row"><button class="btn-sm" id="cd-cancel">Cancel</button><button class="btn btn-primary" id="cd-confirm" style="background:#8C2F2F;">Delete</button></div>
+  `);
+  document.getElementById('cd-cancel').addEventListener('click', ()=>{ closeModal(); renderScreen(); });
+  document.getElementById('cd-confirm').addEventListener('click', async ()=>{ await onConfirm(); closeModal(); renderScreen(); });
+}
 
 /* ============================= BOOT ============================= */
 (async function boot(){
   const params = new URLSearchParams(location.search);
   const respondParam = params.get('respond');
   document.getElementById('app').innerHTML = `<div style="padding:60px 20px; text-align:center; color:#F6F3EA; font-family:'JetBrains Mono',monospace;">Loading Stable...</div>`;
+  await hydratePhotoCache();
   await loadAll();
   if(respondParam){ RESPOND_MODE = { payload: decodeRequestPayload(respondParam) }; }
   render();
